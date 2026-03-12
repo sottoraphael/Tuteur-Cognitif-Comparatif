@@ -315,10 +315,14 @@ def construire_messages_albert(prompt_systeme, historique, nouvel_input, texte_c
     return messages
 
 def extraire_texte_stream(reponse):
-    """Générateur pour lire le flux (stream) du modèle mot à mot."""
+    """Générateur sécurisé pour lire le flux (stream) du modèle mot à mot."""
     for chunk in reponse:
-        if chunk.choices[0].delta.content is not None:
-            yield chunk.choices[0].delta.content
+        # Vérification 1 : Le paquet possède-t-il bien l'attribut 'choices' et n'est-il pas vide ?
+        if hasattr(chunk, 'choices') and len(chunk.choices) > 0:
+            delta = chunk.choices[0].delta
+            # Vérification 2 : Le delta contient-il un attribut 'content' avec du texte ?
+            if hasattr(delta, 'content') and delta.content is not None:
+                yield delta.content
 
 # ==========================================
 # INTERFACE UTILISATEUR (UI)
@@ -458,3 +462,4 @@ if st.session_state.session_active:
 
 else:
     st.info("👈 Choisis tes paramètres et donne-moi ton cours pour commencer !")
+
