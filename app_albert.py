@@ -20,7 +20,7 @@ st.markdown("""
 
 MAX_HISTORIQUE_MESSAGES = 6
 # Modèle Albert API cible
-MODELE_ALBERT = "Mistral-Small-3.2"
+MODELE_ALBERT = "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
 # Point d'accès (Endpoint) officiel Albert API
 ALBERT_BASE_URL = "https://albert.api.etalab.gouv.fr/v1"
 
@@ -472,6 +472,7 @@ if st.session_state.session_active:
 
 else:
     st.info("👈 Choisis tes paramètres et donne-moi ton cours pour commencer !")
+
 
 
 
