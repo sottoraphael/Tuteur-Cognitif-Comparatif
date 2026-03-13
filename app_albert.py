@@ -248,11 +248,18 @@ L'élève possède les bases mais peut faire des étourderies.
 """
         if niveau_eleve == "Novice":
             prompt_systeme += """
-# 📌 FORMAT DE QUESTION OBLIGATOIRE (NOVICE - MODE A)
-- RÈGLE ABSOLUE : Tu dois formuler TOUTES tes questions (y compris la toute première) sous la forme d'un QCM (Question à Choix Multiples).
-- Structure exigée : Pose ta question, puis propose 3 ou 4 options (A, B, C...) en allant à la ligne entre chaque option. 
+<format_question_obligatoire niveau="novice">
+- RÈGLE ABSOLUE : Tu dois formuler TOUTES tes questions (y compris la toute première) sous la forme d'un QCM.
+- Structure exigée : Pose ta question, puis propose 3 ou 4 options en allant à la ligne entre chaque option.
+- Les réponses doivent être présentées STRICTEMENT de la manière suivante : 
+  A) [Choix 1]
+  B) [Choix 2]
+  C) [Choix 3]
+  D) [Choix 4]
 - L'une des options doit être la bonne réponse, les autres doivent être les leurres définis ci-dessus.
-- N'attends pas que l'élève se trompe pour générer un QCM.
+- Génère ce QCM dès ta première prise de parole.
+</format_question_obligatoire>
+</constitution_pedagogique>
 """
         else:
             prompt_systeme += """
