@@ -73,31 +73,37 @@ def afficher_bilan():
             client = OpenAI(api_key=st.session_state.api_key, base_url=ALBERT_BASE_URL)
             messages_bilan = []
             
-            # --- DÉBUT DU BLOC DE BILAN MÉTACOGNITIF ---
-            instruction_metacognitive = """<bilan_metacognitif>
-<role_et_ton>
-Tu es un coach pédagogique. Fais un bilan métacognitif factuel, ultra-concis et encourageant. Adresse-toi à l'élève avec 'Tu'. Ne pose plus de question.
-</role_et_ton>
+           # --- DÉBUT DU BLOC DE BILAN MÉTACOGNITIF (VERSION MISTRAL XML) ---
 
-<contraintes_format>
-Ton bilan doit être EXTRÊMEMENT BREF, visuel et direct. Utilise des listes à puces et limite-toi à 1 ou 2 phrases maximum par point. Pas de longs paragraphes.
-</contraintes_format>
-
-<structure_obligatoire>
-Structure obligatoirement ton bilan avec les points suivants :
-1. 🎯 Tes acquis : Va droit au but sur ce qui est su et ce qui reste à revoir (très bref).
-2. 💡 Tes erreurs : Dédramatise et donne LA stratégie précise à utiliser la prochaine fois (1 phrase).
-"""
-            if "Mode A" in st.session_state.objectif:
-                instruction_metacognitive += """3. ⏳ Le piège de la relecture : Rappelle en 1 courte phrase que relire le cours donne l'illusion de savoir (biais de fluence) et que seul l'effort de mémoire compte.
-4. 📝 Prochaine étape : Suggère en 1 courte phrase de faire à la maison exactement comme aujourd'hui : cacher son cours et forcer son cerveau à retrouver les informations sur une feuille blanche.
-"""
-            else:
-                instruction_metacognitive += """3. ⏳ Le piège de la correction : Rappelle en 1 courte phrase que lire une correction donne l'illusion d'avoir compris. La vraie compréhension, c'est savoir l'expliquer soi-même.
-4. 📝 Prochaine étape : Suggère en 1 courte phrase de faire à la maison exactement comme aujourd'hui : reprendre un exercice et expliquer la méthode à voix haute comme à un camarade, ou chercher les erreurs.
-"""
-
-            instruction_metacognitive += """</structure_obligatoire>\n</bilan_metacognitif>"""
+    # 1. On prépare la base commune encapsulée en XML
+    instruction_metacognitive = """<bilan_metacognitif>
+    <role_et_ton>
+    Tu es un coach pédagogique. Fais un bilan métacognitif factuel, ultra-concis et encourageant. Adresse-toi à l'élève avec 'Tu'. Ne pose plus de question.
+    </role_et_ton>
+    
+    <contraintes_format>
+    Ton bilan doit être EXTRÊMEMENT BREF, visuel et direct. Utilise des listes à puces et limite-toi à 1 ou 2 phrases maximum par point. Pas de longs paragraphes.
+    </contraintes_format>
+    
+    <structure_obligatoire>
+    Structure obligatoirement ton bilan avec les points suivants :
+    1. 🎯 Tes acquis : Va droit au but sur ce qui est su et ce qui reste à revoir (très bref).
+    2. 💡 Tes erreurs : Dédramatise et donne LA stratégie précise à utiliser la prochaine fois (1 phrase).
+    """
+    
+    # 2. On ajoute les conseils spécifiques selon le mode choisi ET on ferme proprement les balises XML
+    if "Mode A" in objectif_eleve:
+        instruction_metacognitive += """3. ⏳ Le piège de la relecture : Rappelle en 1 courte phrase que relire le cours donne l'illusion de savoir (biais de fluence) et que seul l'effort de mémoire compte.
+    4. 📝 Prochaine étape : Suggère en 1 courte phrase de faire à la maison exactement comme aujourd'hui : cacher son cours et forcer son cerveau à retrouver les informations sur une feuille blanche.
+    </structure_obligatoire>
+    </bilan_metacognitif>
+    """
+    else:
+        instruction_metacognitive += """3. ⏳ Le piège de la correction : Rappelle en 1 courte phrase que lire une correction donne l'illusion d'avoir compris. La vraie compréhension, c'est savoir l'expliquer soi-même.
+    4. 📝 Prochaine étape : Suggère en 1 courte phrase de faire à la maison exactement comme aujourd'hui : reprendre un exercice et expliquer la méthode à voix haute comme à un camarade, ou chercher les erreurs.
+    </structure_obligatoire>
+    </bilan_metacognitif>
+    """
             # --- FIN DU BLOC DE BILAN ---
 
             messages_bilan.append({"role": "system", "content": instruction_metacognitive})
@@ -455,3 +461,4 @@ if st.session_state.session_active:
 
 else:
     st.info("👈 Configure les paramètres et charge ton cours pour commencer.")
+
