@@ -1,8 +1,9 @@
 streamlit>=1.32.0
 google-generativeai>=0.8.2
-openai
 PyPDF2
-sympy
-pydantic<2.0.0
 pydantic
+openai>=1.10.0
+sympy
+spacy>=3.7.0
+pydantic>=2.5.0
 
