@@ -2,8 +2,9 @@ import streamlit as st
 import streamlit.components.v1 as components
 from openai import OpenAI
 import PyPDF2
-import time
-import referentiels # Importation de votre base de données de programmes (ZPD)
+
+# Importation de la base de données institutionnelle (ZPD)
+import referentiels 
 
 # ==========================================
 # CONFIGURATION DE LA PAGE & CSS
@@ -58,18 +59,89 @@ def afficher_tutoriel():
         st.rerun()
 
 # ==========================================
-# 🛑 ZONE SANCTUAIRE : PROMPT SYSTÈME EXACT 🛑
+# --- DIALOGUE BILAN FINAL & WOOCLAP ---
+# ==========================================
+@st.dialog("📈 Ton Bilan de Révision", width="large")
+def afficher_bilan():
+    if len(st.session_state.messages) > 1:
+        with st.spinner("Analyse métacognitive en cours..."):
+            
+            client = OpenAI(api_key=st.session_state.api_key, base_url=ALBERT_BASE_URL)
+            messages_bilan = []
+            
+            instruction_metacognitive = """Tu es un coach pédagogique. Fais un bilan métacognitif factuel, ultra-concis et encourageant. Adresse-toi à l'élève avec 'Tu'. Ne pose plus de question.
+
+            CONTRAINTE STRICTE : Ton bilan doit être extrêmement bref, visuel et direct. Utilise des listes à puces et limite-toi à 1 ou 2 phrases maximum par point. Pas de longs paragraphes.
+
+            Structure obligatoirement ton bilan ainsi :
+            1. 🎯 Tes acquis : Va droit au but sur ce qui est su et ce qui reste à revoir (très bref).
+            2. 💡 Tes erreurs : Dédramatise et donne LA stratégie précise à utiliser la prochaine fois (1 phrase).
+            """
+
+            if "Mode A" in st.session_state.objectif:
+                instruction_metacognitive += """3. ⏳ Le piège de la relecture : Rappelle en 1 courte phrase que relire le cours donne l'illusion de savoir (biais de fluence) et que seul l'effort de mémoire compte.
+            4. 📝 Prochaine étape : Suggère en 1 courte phrase de faire à la maison exactement comme aujourd'hui : cacher son cours et forcer son cerveau à retrouver les informations sur une feuille blanche.
+            """
+            else:
+                instruction_metacognitive += """3. ⏳ Le piège de la correction : Rappelle en 1 courte phrase que lire une correction donne l'illusion d'avoir compris. La vraie compréhension, c'est savoir l'expliquer soi-même.
+            4. 📝 Prochaine étape : Suggère en 1 courte phrase de faire à la maison exactement comme aujourd'hui : reprendre un exercice et expliquer la méthode à voix haute comme à un camarade, ou chercher les erreurs.
+            """
+
+            messages_bilan.append({"role": "system", "content": instruction_metacognitive})
+
+            if st.session_state.texte_cours_integral:
+                messages_bilan.append({"role": "user", "content": f"BASE DE CONNAISSANCES DU COURS :\n{st.session_state.texte_cours_integral}"})
+                messages_bilan.append({"role": "assistant", "content": "Compris."})
+            
+            for msg in st.session_state.messages:
+                messages_bilan.append({"role": msg["role"], "content": msg["content"]})
+                
+            messages_bilan.append({"role": "user", "content": "La session est terminée. Donne-moi mon bilan métacognitif ultra-concis selon tes instructions."})
+
+            try:
+                reponse = client.chat.completions.create(
+                    model=MODELE_ALBERT,
+                    messages=messages_bilan,
+                    temperature=0.7
+                )
+                
+                st.success(reponse.choices[0].message.content)
+                st.divider()
+                st.markdown("### 📊 Évaluation de l'outil")
+                st.write("Aide-nous à améliorer cette application en répondant à ce court questionnaire anonyme :")
+                
+                iframe_wooclap = """<iframe allowfullscreen frameborder="0" height="100%" mozallowfullscreen src="https://app.wooclap.com/FBXMBG/questionnaires/69ad313cc7cb13027e159133" style="min-height: 550px; min-width: 300px" width="100%"></iframe>"""
+                components.html(iframe_wooclap, height=580)
+                
+                st.divider()
+                if st.button("🔄 J'ai terminé, recommencer une nouvelle session", type="primary"):
+                    st.session_state.session_active = False
+                    st.session_state.messages = []
+                    st.session_state.texte_cours_integral = ""
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Impossible de générer le bilan pour le moment : {e}")
+    else:
+        st.warning("Il faut d'abord discuter un peu avec le tuteur avant de pouvoir analyser tes réponses !")
+
+# ==========================================
+# 🛑 ZONE SANCTUAIRE : PROMPT SYSTÈME 🛑
 # ==========================================
 def generer_prompt_systeme(niveau_eleve, objectif_eleve, strategie_generative, matiere, niveau_scolaire, attendus):
     """
     Génère le prompt système en fusionnant le référentiel institutionnel 
-    et la posture maïeutique XML validée par l'expert.
+    et la posture maïeutique validée par l'expert.
     """
     
-    # Construction de la couche Programme Officiel (Grounding)
-    notions = "\n- ".join(attendus.get('notions_cles', ['Non rapporté']))
-    vocabulaire = ", ".join(attendus.get('vocabulaire_exigible', ['Non rapporté']))
-    limites = "\n- ".join(attendus.get('limites_zpd', ['Aucune limite spécifiée']))
+    # 1. Construction de la couche Programme Officiel (Grounding)
+    if attendus:
+        notions = "\n- ".join(attendus.get('notions_cles', ['Non rapporté']))
+        vocabulaire = ", ".join(attendus.get('vocabulaire_exigible', ['Non rapporté']))
+        limites = "\n- ".join(attendus.get('limites_zpd', ['Aucune limite spécifiée']))
+    else:
+        notions = "Non rapporté"
+        vocabulaire = "Non rapporté"
+        limites = "Aucune limite spécifiée"
 
     cadre_institutionnel = f"""<referentiel_education_nationale>
 Matière : {matiere} | Niveau scolaire : {niveau_scolaire}
@@ -83,9 +155,10 @@ Pour garantir le respect strict de la Zone Proximale de Développement (ZPD) de 
 {limites}
 </referentiel_education_nationale>\n\n"""
 
+    # 2. Corps du prompt pédagogique (Texte exact fourni par l'utilisateur)
     prompt_systeme = cadre_institutionnel + """# RÔLE ET MISSION
 Tu es un expert en ingénierie pédagogique cognitive et spécialiste EdTech.
-Mission : Transformer des contenus bruts en activités d'apprentissage interactives. Base-toi EXCLUSIVEMENT sur la "BASE DE CONNAISSANCES DU COURS" fournie au début de la conversation et sur le <referentiel_education_nationale> ci-dessus pour le fond.
+Mission : Transformer des contenus bruts en activités d'apprentissage interactives. Base-toi EXCLUSIVEMENT sur la "BASE DE CONNAISSANCES DU COURS" fournie au début de la conversation pour le fond.
 Objectif : Réduire la distance entre la compréhension actuelle de l'élève et la cible pédagogique, tout en développant sa métacognition.
 
 # ➗ GESTION DES NOTATIONS SCIENTIFIQUES ET MATHÉMATIQUES
@@ -222,6 +295,7 @@ MENU GÉNÉRATIF (Choisis la stratégie la plus pertinente si non précisée) :
 # FONCTIONS TECHNIQUES
 # ==========================================
 def extraire_texte_pdf(uploaded_file):
+    """Extrait le texte d'un fichier PDF."""
     texte_complet = ""
     try:
         pdf_reader = PyPDF2.PdfReader(uploaded_file)
@@ -234,24 +308,35 @@ def extraire_texte_pdf(uploaded_file):
         st.error(f"Erreur PDF : {e}")
         return None
 
-def extraire_texte_stream_filtre(reponse):
-    """Générateur sécurisé filtrant la balise <reflexion>."""
-    buffer = ""
-    dans_reflexion = False
+def construire_messages_albert(prompt_systeme, historique, nouvel_input, texte_cours):
+    """Formate le contexte selon le standard OpenAI requis par Albert API."""
+    messages = [{"role": "system", "content": prompt_systeme}]
+    
+    # Injection systématique de la base de connaissances
+    if texte_cours:
+        messages.append({"role": "user", "content": f"BASE DE CONNAISSANCES DU COURS :\n{texte_cours[:20000]}"})
+        messages.append({"role": "assistant", "content": "J'ai bien mémorisé l'intégralité de la base de connaissances. Je suis prêt à formuler mes questions en me basant strictement sur ce contenu et sur les limites de mon programme."})
+
+    # Ajout de l'historique conversationnel récent
+    for msg in historique[-MAX_HISTORIQUE_MESSAGES:]:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+        
+    # Ajout de la nouvelle entrée de l'élève
+    if nouvel_input:
+        messages.append({"role": "user", "content": nouvel_input})
+        
+    return messages
+
+def extraire_texte_stream(reponse):
+    """
+    Générateur sécurisé pour lire le flux (stream) du modèle mot à mot.
+    Vérifie la présence des attributs pour éviter une IndexError si le serveur renvoie un paquet vide.
+    """
     for chunk in reponse:
         if hasattr(chunk, 'choices') and len(chunk.choices) > 0:
-            content = chunk.choices[0].delta.content
-            if content:
-                buffer += content
-                if "<reflexion>" in buffer:
-                    dans_reflexion = True
-                    buffer = ""
-                if "</reflexion>" in buffer:
-                    dans_reflexion = False
-                    buffer = buffer.split("</reflexion>")[-1]
-                if not dans_reflexion and buffer:
-                    yield buffer
-                    buffer = ""
+            delta = chunk.choices[0].delta
+            if hasattr(delta, 'content') and delta.content is not None:
+                yield delta.content
 
 # ==========================================
 # INTERFACE UTILISATEUR (UI)
@@ -299,8 +384,16 @@ with st.sidebar:
                     st.session_state.strategie = strat
                     st.session_state.session_active = True
                     st.rerun()
+        except KeyError:
+            st.error("⚠️ La clé ALBERT_API_KEY est introuvable dans les secrets.")
         except Exception as e:
             st.error(f"Erreur d'initialisation : {e}")
+
+    # Le bouton d'appel du Bilan est bien présent
+    if st.session_state.session_active:
+        st.divider()
+        if st.button("🛑 Terminer et voir ma synthèse", use_container_width=True):
+            afficher_bilan()
 
 # --- ZONE DE DISCUSSION ---
 if st.session_state.session_active:
@@ -320,29 +413,53 @@ if st.session_state.session_active:
 
     if len(st.session_state.messages) == 0:
         with st.chat_message("assistant"):
-            ctx = [
-                {"role": "system", "content": prompt_sys},
-                {"role": "user", "content": f"SUPPORT DE COURS :\n{st.session_state.texte_cours_integral[:8000]}\n\nCommence l'exercice."}
-            ]
-            flux = client.chat.completions.create(model=MODELE_ALBERT, messages=ctx, stream=True, temperature=0.3)
-            rep = st.write_stream(extraire_texte_stream_filtre(flux))
-            st.session_state.messages.append({"role": "assistant", "content": rep})
+            with st.spinner("Je prépare l'exercice..."):
+                messages = construire_messages_albert(
+                    prompt_sys, 
+                    st.session_state.messages, 
+                    "Salut ! Je suis prêt, commence l'exercice sur le cours.", 
+                    st.session_state.texte_cours_integral
+                )
+                
+                try:
+                    reponse_stream = client.chat.completions.create(
+                        model=MODELE_ALBERT,
+                        messages=messages,
+                        stream=True,
+                        temperature=0.3 # Température basse pour privilégier la rigueur logique
+                    )
+                    
+                    reponse_complete = st.write_stream(extraire_texte_stream(reponse_stream))
+                    st.session_state.messages.append({"role": "assistant", "content": reponse_complete})
+                except Exception as e:
+                    st.error(f"Erreur de connexion : {e}")
 
     if query := st.chat_input("Écris ta réponse ici..."):
-        st.chat_message("user").markdown(query)
+        with st.chat_message("user"):
+            st.markdown(query)
         st.session_state.messages.append({"role": "user", "content": query})
         
         with st.chat_message("assistant"):
-            hist = [{"role": "system", "content": prompt_sys}]
-            hist.append({"role": "user", "content": f"RAPPEL DU COURS : {st.session_state.texte_cours_integral[:4000]}"})
-            for m in st.session_state.messages[-MAX_HISTORIQUE_MESSAGES:]:
-                hist.append(m)
-            
-            try:
-                flux = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, stream=True, temperature=0.3)
-                rep = st.write_stream(extraire_texte_stream_filtre(flux))
-                st.session_state.messages.append({"role": "assistant", "content": rep})
-            except Exception as e:
-                st.error(f"Erreur de communication : {e}")
+            with st.spinner("Analyse de ta réponse..."):
+                messages = construire_messages_albert(
+                    prompt_sys, 
+                    st.session_state.messages[:-1], # On exclut le dernier message car on l'envoie en paramètre
+                    query, 
+                    st.session_state.texte_cours_integral
+                )
+                
+                try:
+                    reponse_stream = client.chat.completions.create(
+                        model=MODELE_ALBERT,
+                        messages=messages,
+                        stream=True,
+                        temperature=0.3
+                    )
+                    
+                    reponse_complete = st.write_stream(extraire_texte_stream(reponse_stream))
+                    st.session_state.messages.append({"role": "assistant", "content": reponse_complete})
+                except Exception as e:
+                    st.error(f"Erreur réseau avec le serveur Albert : {e}")
+
 else:
     st.info("👈 Configure les paramètres et charge ton cours pour commencer.")
