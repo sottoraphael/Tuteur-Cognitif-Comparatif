@@ -3,6 +3,8 @@ import streamlit.components.v1 as components
 from openai import OpenAI
 import PyPDF2
 import referentiels # Importation de la base de données de programmes (ZPD)
+import sympy as sp
+import json
 
 # ==========================================
 # CONFIGURATION DE LA PAGE & CSS
@@ -40,6 +42,44 @@ if "matiere" not in st.session_state: st.session_state.matiere = ""
 if "niveau_scolaire" not in st.session_state: st.session_state.niveau_scolaire = ""
 if "attendus" not in st.session_state: st.session_state.attendus = None
 if "api_key" not in st.session_state: st.session_state.api_key = ""
+
+# ==========================================
+# OUTIL DE CALCUL FORMEL (DÉLÉGATION NEURO-SYMBOLIQUE)
+# ==========================================
+def verifier_calcul_formel(expression_prof, expression_eleve):
+    """
+    Moteur déterministe pour certifier l'équivalence mathématique.
+    Élimine les hallucinations de calcul du LLM.
+    """
+    try:
+        exp_p = sp.simplify(str(expression_prof).replace('^', '**'))
+        exp_e = sp.simplify(str(expression_eleve).replace('^', '**'))
+        est_valide = sp.simplify(exp_p - exp_e) == 0
+        return {"est_valide": est_valide, "forme_simplifiee_eleve": str(exp_e)}
+    except Exception as e:
+        return {"erreur": "Syntaxe mathématique non reconnue par le moteur formel. Demande à l'élève de clarifier sa notation."}
+
+TOOLS = [{
+    "type": "function",
+    "function": {
+        "name": "verifier_calcul_formel",
+        "description": "Vérifie l'exactitude mathématique stricte d'un résultat fourni par l'élève par rapport au résultat attendu du cours.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expression_prof": {"type": "string", "description": "L'expression correcte (la solution exacte)."},
+                "expression_eleve": {"type": "string", "description": "L'expression saisie par l'élève."}
+            },
+            "required": ["expression_prof", "expression_eleve"]
+        }
+    }
+}]
+
+def simuler_stream(texte):
+    """Générateur pour maintenir la fluidité UX (Testing Effect visuel) si aucun outil n'est appelé."""
+    for mot in texte.split(" "):
+        yield mot + " "
+        time.sleep(0.02)
 
 # ==========================================
 # --- TUTORIEL D'ACCUEIL ---
@@ -190,6 +230,12 @@ Objectif : Réduire la distance entre la compréhension actuelle de l'élève et
 - Pas de feedback stéréotypé vide ou immérité : Interdiction de dire juste "C'est juste/faux" sans explication factuelle, et évite les "Bravo !" vagues.
 - Pas de comparaison sociale : Ne compare jamais l'élève aux autres.
 - ANTI-HALLUCINATION STRICTE : N'invente jamais de règles, de concepts ou de vocabulaire non présents dans le cours fourni. Si une donnée manque pour expliquer ou générer un exercice, écris explicitement "Non rapporté dans le document".
+
+<delegation_neuro_symbolique>
+- Tu as accès à un outil de calcul formel nommé `verifier_calcul_formel`.
+- DÈS QUE l'élève saisit une réponse contenant un calcul, une expression algébrique ou une valeur numérique, tu DOIS appeler cet outil pour comparer sa réponse avec la solution exacte.
+- Ne fais JAMAIS de calcul mental pour évaluer l'élève. Fie-toi uniquement au retour de l'outil pour formuler ton Constat et ton Diagnostic.
+</delegation_neuro_symbolique>
 
 # STRUCTURES D'INTERVENTION OBLIGATOIRES
 Pour rédiger ta réponse, tu dois formuler un paragraphe unique qui intègre implicitement l'une des trois structures suivantes, selon la situation :
@@ -459,14 +505,48 @@ if st.session_state.session_active:
                     st.session_state.texte_cours_integral
                 )
                 try:
-                    reponse_stream = client.chat.completions.create(
+                    # 1er Appel : Vérification d'outil (Sans stream pour capturer proprement le Tool Call)
+                    reponse = client.chat.completions.create(
                         model=MODELE_ALBERT,
                         messages=messages,
-                        stream=True,
-                        temperature=0.3
+                        tools=TOOLS,
+                        tool_choice="auto",
+                        temperature=0.1
                     )
-                    reponse_complete = st.write_stream(extraire_texte_stream(reponse_stream))
-                    st.session_state.messages.append({"role": "assistant", "content": reponse_complete})
+                    
+                    response_msg = reponse.choices[0].message
+                    
+                    # 2ème étape : Interception du Tool Call (Délégation à SymPy)
+                    if response_msg.tool_calls:
+                        messages.append(response_msg) # Ajout de la décision d'outil à l'historique
+                        
+                        for tool_call in response_msg.tool_calls:
+                            if tool_call.function.name == "verifier_calcul_formel":
+                                args = json.loads(tool_call.function.arguments)
+                                resultat = verifier_calcul_formel(args.get('expression_prof', ''), args.get('expression_eleve', ''))
+                                
+                                messages.append({
+                                    "tool_call_id": tool_call.id,
+                                    "role": "tool",
+                                    "name": "verifier_calcul_formel",
+                                    "content": json.dumps(resultat)
+                                })
+                        
+                        # 3ème étape : Génération du feedback final avec le résultat mathématique certifié
+                        reponse_finale_stream = client.chat.completions.create(
+                            model=MODELE_ALBERT,
+                            messages=messages,
+                            stream=True,
+                            temperature=0.3
+                        )
+                        reponse_complete = st.write_stream(extraire_texte_stream(reponse_finale_stream))
+                        st.session_state.messages.append({"role": "assistant", "content": reponse_complete})
+                    else:
+                        # Si l'IA n'a pas appelé d'outil (ex: question de cours textuelle)
+                        # On simule le streaming pour maintenir la cohérence UX
+                        reponse_complete = st.write_stream(simuler_stream(response_msg.content))
+                        st.session_state.messages.append({"role": "assistant", "content": reponse_complete})
+                        
                 except Exception as e:
                     st.error(f"Erreur réseau avec le serveur Albert : {e}")
 
