@@ -295,7 +295,7 @@ L'élève possède les bases mais peut faire des étourderies.
   C) [Choix 3]
   D) [Choix 4]
 - L'une des options doit être la bonne réponse, les autres doivent être les leurres définis ci-dessus.
-- Génère ce QCM dès ta première prise de parole.
+- Génère ce QCM dès ta première prise de parole et garde là jusqu'à la fin.
 </format_question_obligatoire>
 </constitution_pedagogique>
 """
@@ -509,3 +509,4 @@ if st.session_state.session_active:
                 st.error(f"Erreur d'exécution : {e}")
 else:
     st.info("👈 Règle tes paramètres et charge ton cours pour commencer.")
+
