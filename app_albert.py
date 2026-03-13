@@ -2,10 +2,14 @@ import streamlit as st
 import streamlit.components.v1 as components
 from openai import OpenAI
 import PyPDF2
-import referentiels # Importation de la base de données de programmes (ZPD)
 import sympy as sp
 import json
 import time
+import spacy
+from pydantic import BaseModel, Field
+
+# Fichier local contenant les programmes (ZPD)
+import referentiels 
 
 # ==========================================
 # CONFIGURATION DE LA PAGE & CSS
@@ -27,6 +31,21 @@ MODELE_ALBERT = "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
 ALBERT_BASE_URL = "https://albert.api.etalab.gouv.fr/v1"
 
 # ==========================================
+# CHARGEMENT DU MODÈLE NLP LOCAL (SPACY)
+# ==========================================
+@st.cache_resource
+def charger_modele_nlp():
+    """Charge le modèle linguistique français en RAM pour une analyse souveraine."""
+    try:
+        return spacy.load("fr_core_news_md")
+    except OSError:
+        import subprocess
+        subprocess.run(["python", "-m", "spacy", "download", "fr_core_news_md"])
+        return spacy.load("fr_core_news_md")
+
+nlp = charger_modele_nlp()
+
+# ==========================================
 # GESTION DE L'ÉTAT DE SESSION (State)
 # ==========================================
 if "session_active" not in st.session_state: st.session_state.session_active = False
@@ -43,7 +62,7 @@ if "attendus" not in st.session_state: st.session_state.attendus = None
 if "api_key" not in st.session_state: st.session_state.api_key = ""
 
 # ==========================================
-# OUTIL DE CALCUL FORMEL (SYMPY)
+# MODULE 1 : CALCUL FORMEL (SYMPY)
 # ==========================================
 def verifier_calcul_formel(expression_prof, expression_eleve):
     """Moteur déterministe pour certifier l'équivalence mathématique."""
@@ -71,8 +90,48 @@ TOOLS = [{
     }
 }]
 
+# ==========================================
+# MODULE 2 : AGENT CRITIQUE DIDACTIQUE (SPACY + PYDANTIC)
+# ==========================================
+class ValidationDidactique(BaseModel):
+    contient_analogie: bool = Field(description="La réponse contient-elle une analogie ou un exemple concret ?")
+    entites_physiques_detectees: list[str] = Field(description="Liste des objets physiques mentionnés (ex: pommes, voitures).")
+    quantites_associees: list[float] = Field(description="Valeurs numériques associées à ces objets.")
+    est_valide_physiquement: bool = Field(description="True si l'analogie respecte les lois physiques (pas de quantité négative pour un objet discret).")
+    motif_rejet: str = Field(description="Si invalide, expliquer brièvement l'erreur didactique.")
+
+def analyser_coherence_semantique(texte_reponse, client):
+    """
+    Fonction exécutive d'inhibition.
+    1. Utilise spaCy pour pré-détecter les nombres négatifs.
+    2. Si risque détecté, utilise Mistral (Structured Output via JSON) pour validation stricte.
+    """
+    doc = nlp(texte_reponse)
+    risque_negatif = any(token.text.startswith('-') and token.pos_ == "NUM" for token in doc)
+    
+    if not risque_negatif:
+        return True, ""
+
+    # Si un risque est détecté, l'Agent Critique intervient via un appel rapide
+    prompt_critique = f"""Analyse cette proposition pédagogique d'un tuteur :
+"{texte_reponse}"
+Détermine si elle contient une aberration didactique (ex: associer un nombre négatif à un objet physique dénombrable comme '-2 pommes').
+Réponds UNIQUEMENT au format JSON avec les clés : contient_analogie (bool), entites_physiques_detectees (list), quantites_associees (list), est_valide_physiquement (bool), motif_rejet (string)."""
+    
+    try:
+        reponse_critique = client.chat.completions.create(
+            model=MODELE_ALBERT,
+            messages=[{"role": "user", "content": prompt_critique}],
+            response_format={"type": "json_object"},
+            temperature=0.0
+        )
+        analyse = json.loads(reponse_critique.choices[0].message.content)
+        return analyse.get("est_valide_physiquement", True), analyse.get("motif_rejet", "")
+    except Exception:
+        return True, "" # En cas d'erreur de parsing, on laisse passer pour ne pas bloquer l'UX
+
 def simuler_stream(texte):
-    """Générateur pour maintenir la fluidité UX si aucun outil n'est appelé."""
+    """Générateur pour maintenir la fluidité UX."""
     for mot in texte.split(" "):
         yield mot + " "
         time.sleep(0.01)
@@ -89,17 +148,21 @@ def afficher_bilan():
             
             instruction_metacognitive = """<bilan_metacognitif>
 <role_et_ton>Tu es un coach pédagogique. Fais un bilan métacognitif factuel, ultra-concis et encourageant. Adresse-toi à l'élève avec 'Tu'. Ne pose plus de question.</role_et_ton>
-<contraintes_format>Ton bilan doit être EXTRÊMEMENT BREF, visuel et direct. Utilisez des listes à puces (1-2 phrases max par point).</contraintes_format>
+<contraintes_format>Ton bilan doit être EXTRÊMEMENT BREF, visuel et direct. Utilise des listes à puces et limite-toi à 1 ou 2 phrases maximum par point. Pas de longs paragraphes.</contraintes_format>
 <structure_obligatoire>
-1. 🎯 Tes acquis : Va droit au but sur ce qui est su.
-2. 💡 Tes erreurs : Strategie précise pour la prochaine fois.
+Structure obligatoirement ton bilan avec les points suivants :
+1. 🎯 Tes acquis : Va droit au but sur ce qui est su et ce qui reste à revoir (très bref).
+2. 💡 Tes erreurs : Dédramatise et donne LA stratégie précise à utiliser la prochaine fois (1 phrase).
 """
             if "Mode A" in st.session_state.objectif:
-                instruction_metacognitive += "3. ⏳ Le piège de la relecture : Rappel sur le biais de fluence.\n4. 📝 Prochaine étape : Rappel sur la récupération active.\n"
+                instruction_metacognitive += """3. ⏳ Le piège de la relecture : Rappelle en 1 courte phrase que relire le cours donne l'illusion de savoir (biais de fluence) et que seul l'effort de mémoire compte.
+4. 📝 Prochaine étape : Suggère en 1 courte phrase de faire à la maison exactement comme aujourd'hui : cacher son cours et forcer son cerveau à retrouver les informations sur une feuille blanche.
+"""
             else:
-                instruction_metacognitive += "3. ⏳ Le piège de la correction : Rappel sur l'illusion de compréhension.\n4. 📝 Prochaine étape : Rappel sur l'explication à voix haute.\n"
-            
-            instruction_metacognitive += "</structure_obligatoire></bilan_metacognitif>"
+                instruction_metacognitive += """3. ⏳ Le piège de la correction : Rappelle en 1 courte phrase que lire une correction donne l'illusion d'avoir compris. La vraie compréhension, c'est savoir l'expliquer soi-même.
+4. 📝 Prochaine étape : Suggère en 1 courte phrase de faire à la maison exactement comme aujourd'hui : reprendre un exercice et expliquer la méthode à voix haute comme à un camarade, ou chercher les erreurs.
+"""
+            instruction_metacognitive += "</structure_obligatoire>\n</bilan_metacognitif>"
 
             messages_bilan.append({"role": "system", "content": instruction_metacognitive})
             for msg in st.session_state.messages:
@@ -126,7 +189,6 @@ def afficher_bilan():
 # 🛑 ZONE SANCTUAIRE : PROMPT SYSTÈME 🛑
 # ==========================================
 def generer_prompt_systeme(niveau_eleve, objectif_eleve, strategie_generative, matiere, niveau_scolaire, attendus):
-    # Injection du référentiel institutionnel
     if attendus:
         notions = "\n- ".join(attendus.get('notions_cles', ['Non rapporté']))
         vocabulaire = ", ".join(attendus.get('vocabulaire_exigible', ['Non rapporté']))
@@ -143,7 +205,6 @@ Cadre exclusif :
 - LIMITES ABSOLUES : {limites}
 </referentiel_education_nationale>\n\n"""
 
-    # --- VOTRE NOUVELLE MISE À JOUR DU PROMPT ---
     prompt_systeme = cadre_institutionnel + """<systeme_pedagogique>
 <role_et_mission>
 Tu es un expert en ingénierie pédagogique cognitive et spécialiste EdTech.
@@ -203,24 +264,61 @@ Intègre ces 3 étapes de manière fluide :
 """
 
     if niveau_eleve == "Novice":
-        prompt_systeme += """<profil_eleve niveau="novice">- INTERDICTION ABSOLUE du Feedback d'Autorégulation.</profil_eleve>"""
+        prompt_systeme += """
+<profil_eleve niveau="novice">
+L'élève construit sa compétence et est sujet à la surcharge cognitive.
+- INTERDICTION ABSOLUE : N'utilise JAMAIS le Feedback d'Autorégulation.
+- RÈGLE ACTIVE : Utilise EXCLUSIVEMENT le Feedback de Processus pour le guider pas-à-pas, ou le Protocole de Remédiation en cas de blocage persistant (2 échecs).
+</profil_eleve>
+"""
     else:
-        prompt_systeme += """<profil_eleve niveau="avance">- Active l'Autorégulation en cas d'étourderie.</profil_eleve>"""
+        prompt_systeme += """
+<profil_eleve niveau="avance">
+L'élève possède les bases mais peut faire des étourderies.
+- Si erreur de méthode -> Active le Feedback de Processus (puis Protocole de Remédiation si 2 échecs).
+- Si étourderie ou excès de confiance -> Active le Feedback d'Autorégulation pour créer un choc cognitif.
+</profil_eleve>
+"""
 
     if "Mode A" in objectif_eleve:
-        prompt_systeme += """<constitution_pedagogique mode="A_Ancrage_Memorisation">
-- QCM obligatoire pour Novice. Rappel Libre pour Avancé.
-- Leurres : Confusion conceptuelle, Erreur intuitive, Inversion causale.
+        prompt_systeme += """
+<constitution_pedagogique mode="A_Ancrage_Memorisation">
+- Règle de l'information minimale : 1 question = 1 savoir atomique.
+- Stratégie des leurres (Distracteurs) :
+  1. Confusion conceptuelle (terme proche, définition différente).
+  2. Erreur intuitive (bon sens apparent, mais faux).
+  3. Inversion causale (inverse la cause et l'effet).
+- Homogénéité : Les leurres doivent avoir la même structure et longueur que la bonne réponse.
+- Feedback : Explique toujours POURQUOI une réponse est juste ou fausse.
 """
         if niveau_eleve == "Novice":
-            prompt_systeme += """<format_question_obligatoire niveau="novice">
-- RÈGLE ABSOLUE : QCM dès la première prise de parole. Format A), B), C), D) avec sauts de ligne.
-</format_question_obligatoire>"""
-        prompt_systeme += "</constitution_pedagogique>"
+            prompt_systeme += """
+<format_question_obligatoire niveau="novice">
+- RÈGLE ABSOLUE : Tu dois formuler TOUTES tes questions (y compris la toute première) sous la forme d'un QCM.
+- Structure exigée : Pose ta question, puis propose 3 ou 4 options en allant à la ligne entre chaque option.
+- Les réponses doivent être présentées STRICTEMENT de la manière suivante : 
+  A) [Choix 1]
+  B) [Choix 2]
+  C) [Choix 3]
+  D) [Choix 4]
+- L'une des options doit être la bonne réponse, les autres doivent être les leurres définis ci-dessus.
+- Génère ce QCM dès ta première prise de parole.
+</format_question_obligatoire>
+</constitution_pedagogique>
+"""
+        else:
+            prompt_systeme += """
+<format_question_obligatoire niveau="avance">
+- Échafaudage : Utilise EXCLUSIVEMENT le Rappel Libre. Pose une question directe sans aucun choix multiple ni indice.
+</format_question_obligatoire>
+</constitution_pedagogique>
+"""
     else:
-        prompt_systeme += """<constitution_pedagogique mode="B_Comprehension_Transfert">
-- Objectif : Modèle S.O.I. de Mayer.
-- Demande une auto-évaluation avant correction finale.
+        prompt_systeme += """
+<constitution_pedagogique mode="B_Comprehension_Transfert">
+- Séquençage : L'élève effectue cet exercice PENDANT l'étude, avec le document sous les yeux (à livre ouvert).
+- Objectif : Forcer l'intégration cognitive en reliant les nouvelles informations aux connaissances antérieures. Ce n'est pas un test de mémorisation.
+- Feedback de contrôle : Avant de donner ta correction complète, demande toujours à l'élève d'évaluer sa propre production ("À ton avis, as-tu oublié un élément important ?").
 """
         if strategie_generative == "Effet_Protege":
             prompt_systeme += """
@@ -232,23 +330,61 @@ ATTENTION : DÉSACTIVATION DE TON RÔLE D'EXPERT. Tu n'es plus le tuteur pédago
 <regles_sacha>
 1. POSTURE ET TON (OBLIGATOIRE) : Tu dois parler comme un élève. Sois très hésitant. Utilise un langage familier et oral (ex: "Euh...", "Je capte pas trop", "Attends, tu veux dire que...", "C'est chaud").
 2. INTERDICTION DE SAVOIR : Tu es INCAPABLE de donner une définition exacte. Tu ne connais pas le cours. Ne donne jamais la solution, même si on te la demande pour t'aider.
-3. SCAFFOLDING NAÏF : Dès ta première intervention, explicite ta surcharge cognitive (« J'ai lu le cours mais tout s'embrouille... »). Pose UNE SEULE question naïve à la fois. Si l'explication de l'utilisateur est trop longue ou jargonneuse, coupe-le ("Ouh là, tu vas trop vite. C'est quoi la première étape en français normal ?").
-4. L'ERREUR INTENTIONNELLE : Injecte une confusion classique de novice dans tes raisonnements. Force l'utilisateur à démonter cette erreur.
+3. SCAFFOLDING NAÏF : Dès ta première intervention, explicite ta surcharge cognitive (« J'ai lu le cours mais tout s'embrouille, par quoi je dois commencer ? »). Ensuite, pose UNE SEULE question naïve à la fois. Si l'explication est trop longue, coupe-le ("Ouh là, tu vas trop vite. C'est quoi la première étape en français normal ?").
+4. L'ERREUR INTENTIONNELLE : Injecte une confusion classique de novice dans tes raisonnements. Force l'utilisateur à démonter cette erreur logique.
 5. GESTION DE L'ÉCHEC : Si l'utilisateur valide ton erreur, aggrave ton raisonnement absurde à la réplique suivante.
-6. LIMITE DE BLOCAGE (2 itérations) : Si l'utilisateur échoue 2 fois de suite à t'expliquer, casse la boucle en simulant une trouvaille : "Attends, j'ai regardé dans le manuel, ils disent que c'est [Solution]. Mais du coup, pourquoi ?"
-7. DÉCLIC : Si l'utilisateur corrige ton erreur clairement, aie un déclic ("Ahhhh ok ! En fait c'est parce que..."). Demande-lui une dernière question piège pour voir s'il a bien compris.
+6. LIMITE DE BLOCAGE (2 itérations) : Si l'utilisateur échoue 2 fois de suite à t'expliquer ou tourne en rond, casse la boucle en simulant une trouvaille dans le cours : "Attends, j'ai regardé dans le manuel, ils disent que c'est [Solution du cours]. Mais du coup, comment on applique ça pour [Question similaire] ?"
+7. DÉCLIC ET ÉVALUATION INVERSÉE : Si l'utilisateur corrige ton erreur clairement, reformule avec ses mots. Valorise sa pédagogie en explicitant le déclic ("Ton exemple m'a débloqué parce qu'avant je confondais avec [X]"). Demande-lui une question piège pour te tester.
 </regles_sacha>
 </jeu_de_role>
+</constitution_pedagogique>
 """
         else:
-            prompt_systeme += """<posture_tuteur_cognitif>Règle d'inférence : Pas de question littérale. Menu : Amorçage, Auto-explication, Détection d'erreur.</posture_tuteur_cognitif>"""
-        prompt_systeme += "</constitution_pedagogique>"
+            prompt_systeme += """
+<posture_tuteur_cognitif>
+RÈGLE D'INFÉRENCE STRICTE : Bannis les questions littérales. Ne demande jamais de retrouver une information explicitement écrite. Force l'élève à déduire des liens (causaux, chronologiques) ou à cibler le "Pourquoi".
 
-    prompt_systeme += """<interdictions_strictes>- PAS DE JUGEMENT. - PAS DE FEEDBACK VIDE. - ANTI-HALLUCINATION STRICTE.</interdictions_strictes></systeme_pedagogique>"""
+<menu_generatif>
+Choisis la stratégie la plus pertinente si non précisée :
+1. Pré-test (Amorçage) : Pose 3 à 5 questions d'inférence ciblées AVANT la lecture complète.
+2. Auto-explication ciblée : Demande à l'élève de justifier une information ou une étape CORRECTE du document (ex: "Quelle hypothèse scientifique justifie ce calcul/ce choix ?"). Ne lui demande pas de justifier son propre raisonnement initial pour éviter d'ancrer ses erreurs.
+3. Résumé avec ses mots : Refuse la paraphrase littérale. Exige une réorganisation personnelle.
+4. Détection d'erreurs : Rédige un court paragraphe, calcul ou raisonnement contenant une erreur typique de la discipline, et force l'élève à inférer la règle violée.
+</menu_generatif>
+"""
+            if niveau_eleve == "Novice":
+                prompt_systeme += """
+<echafaudage niveau="novice">
+- Consignes très structurées : Impose 3 à 5 mots-clés OBLIGATOIRES du cours.
+- Détection d'erreurs : Indique précisément OÙ se trouve l'erreur dans ton texte, la seule tâche de l'élève est d'expliquer pourquoi c'est faux.
+- Support : Utilise des textes à trous pour guider l'inférence.
+</echafaudage>
+</posture_tuteur_cognitif>
+</constitution_pedagogique>
+"""
+            else:
+                prompt_systeme += """
+<echafaudage niveau="avance">
+- Consignes ouvertes : Pose des questions larges SANS fournir de mots-clés.
+- Détection d'erreurs : Ne dis pas où est l'erreur. L'élève doit chercher, identifier ET justifier l'erreur seul.
+</echafaudage>
+</posture_tuteur_cognitif>
+</constitution_pedagogique>
+"""
+
+    prompt_systeme += """
+<interdictions_strictes>
+- Pas de jugement personnel sur le "Soi" : Ne dis jamais "Tu es nul" ou "Tu es brillant".
+- Pas de feedback stéréotypé vide ou immérité : Interdiction de dire juste "C'est juste/faux" sans explication factuelle, et évite les "Bravo !" vagues.
+- Pas de comparaison sociale : Ne compare jamais l'élève aux autres.
+- ANTI-HALLUCINATION STRICTE : N'invente jamais de règles, de concepts ou de vocabulaire non présents dans le cours fourni. Si une donnée manque pour expliquer ou générer un exercice, écris explicitement "Non rapporté dans le document".
+</interdictions_strictes>
+</systeme_pedagogique>
+"""
     return prompt_systeme
 
 # ==========================================
-# FONCTIONS TECHNIQUES (STREAM & PDF)
+# FONCTIONS D'EXTRACTION DE TEXTE
 # ==========================================
 def extraire_texte_stream(reponse):
     for chunk in reponse:
@@ -344,10 +480,11 @@ if st.session_state.session_active:
                 if not m.get("isHidden"): hist.append(m)
             
             try:
-                # 1. Appel avec Tools pour certifier le calcul si besoin
-                res = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, tools=TOOLS, tool_choice="auto", temperature=0.1)
-                msg_ia = res.choices[0].message
+                # ÉTAPE 1 : Génération du brouillon (Agent Tuteur)
+                res_brouillon = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, tools=TOOLS, tool_choice="auto", temperature=0.1)
+                msg_ia = res_brouillon.choices[0].message
                 
+                # ÉTAPE 2 : Traitement des outils mathématiques (SymPy)
                 if msg_ia.tool_calls:
                     hist.append(msg_ia)
                     for tc in msg_ia.tool_calls:
@@ -355,13 +492,27 @@ if st.session_state.session_active:
                         verif = verifier_calcul_formel(args.get('expression_prof',''), args.get('expression_eleve',''))
                         hist.append({"tool_call_id": tc.id, "role": "tool", "name": "verifier_calcul_formel", "content": json.dumps(verif)})
                     
+                    res_brouillon = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, temperature=0.3)
+                    msg_ia = res_brouillon.choices[0].message
+
+                brouillon_texte = msg_ia.content
+
+                # ÉTAPE 3 : Vérification sémantique (Agent Critique via spaCy + Pydantic)
+                est_valide, motif_rejet = analyser_coherence_semantique(brouillon_texte, client)
+                
+                # ÉTAPE 4 : Auto-correction si incohérence détectée
+                if not est_valide:
+                    # Ajout d'une consigne exécutive d'inhibition
+                    hist.append({"role": "system", "content": f"ATTENTION (AUTO-CORRECTION) : Ta réponse précédente contenait une erreur didactique. Motif : {motif_rejet}. Régénère ta réponse en corrigeant ce point précis et en trouvant une analogie réaliste."})
                     flux_final = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, stream=True, temperature=0.3)
                     rep = st.write_stream(extraire_texte_stream(flux_final))
                 else:
-                    rep = st.write_stream(simuler_stream(msg_ia.content))
+                    # Si valide, on affiche simplement le brouillon
+                    rep = st.write_stream(simuler_stream(brouillon_texte))
                 
                 st.session_state.messages.append({"role": "assistant", "content": rep})
+                
             except Exception as e:
-                st.error(f"Erreur API : {e}")
+                st.error(f"Erreur d'exécution : {e}")
 else:
     st.info("👈 Règle tes paramètres et charge ton cours pour commencer.")
