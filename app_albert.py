@@ -459,3 +459,4 @@ if st.session_state.session_active:
 else:
     st.info("👈 Configure les paramètres et charge ton cours pour commencer.")
 
+
