@@ -237,13 +237,12 @@ L'élève possède les bases mais peut faire des étourderies.
 
     if "Mode A" in objectif_eleve:
         prompt_systeme += """
-# LA "CONSTITUTION" PÉDAGOGIQUE - MODE A : ANCRAGE & MÉMORISATION (Testing Effect)
+<constitution_pedagogique mode="A_Ancrage_Memorisation">
 - Règle de l'information minimale : 1 question = 1 savoir atomique.
 - Stratégie des leurres (Distracteurs) :
   1. Confusion conceptuelle (terme proche, définition différente).
   2. Erreur intuitive (bon sens apparent, mais faux).
   3. Inversion causale (inverse la cause et l'effet).
-- Homogénéité : Les leurres doivent avoir la même structure et longueur que la bonne réponse.
 - Feedback : Explique toujours POURQUOI une réponse est juste ou fausse.
 """
         if niveau_eleve == "Novice":
@@ -263,8 +262,10 @@ L'élève possède les bases mais peut faire des étourderies.
 """
         else:
             prompt_systeme += """
-# 📌 FORMAT DE QUESTION OBLIGATOIRE (AVANCÉ - MODE A)
+<format_question_obligatoire niveau="avance">
 - Échafaudage : Utilise EXCLUSIVEMENT le Rappel Libre. Pose une question directe sans aucun choix multiple ni indice.
+</format_question_obligatoire>
+</constitution_pedagogique>
 """
     else:
         prompt_systeme += """
