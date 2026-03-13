@@ -5,8 +5,8 @@ import PyPDF2
 import sympy as sp
 import json
 import time
-import spacy
-from pydantic import BaseModel, Field
+import re
+from pydantic import BaseModel, Field, ValidationError
 
 # Fichier local contenant les programmes (ZPD)
 import referentiels 
@@ -29,21 +29,6 @@ st.markdown("""
 MAX_HISTORIQUE_MESSAGES = 6
 MODELE_ALBERT = "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
 ALBERT_BASE_URL = "https://albert.api.etalab.gouv.fr/v1"
-
-# ==========================================
-# CHARGEMENT DU MODÈLE NLP LOCAL (SPACY)
-# ==========================================
-@st.cache_resource
-def charger_modele_nlp():
-    """Charge le modèle linguistique français en RAM pour une analyse souveraine."""
-    try:
-        return spacy.load("fr_core_news_md")
-    except OSError:
-        import subprocess
-        subprocess.run(["python", "-m", "spacy", "download", "fr_core_news_md"])
-        return spacy.load("fr_core_news_md")
-
-nlp = charger_modele_nlp()
 
 # ==========================================
 # GESTION DE L'ÉTAT DE SESSION (State)
@@ -91,32 +76,32 @@ TOOLS = [{
 }]
 
 # ==========================================
-# MODULE 2 : AGENT CRITIQUE DIDACTIQUE (SPACY + PYDANTIC)
+# MODULE 2 : AGENT CRITIQUE DIDACTIQUE (PYDANTIC + REGEX)
 # ==========================================
 class ValidationDidactique(BaseModel):
     contient_analogie: bool = Field(description="La réponse contient-elle une analogie ou un exemple concret ?")
-    entites_physiques_detectees: list[str] = Field(description="Liste des objets physiques mentionnés (ex: pommes, voitures).")
-    quantites_associees: list[float] = Field(description="Valeurs numériques associées à ces objets.")
-    est_valide_physiquement: bool = Field(description="True si l'analogie respecte les lois physiques (pas de quantité négative pour un objet discret).")
+    entites_physiques_detectees: list[str] = Field(description="Liste des objets physiques mentionnés.")
+    est_valide_physiquement: bool = Field(description="True si l'analogie est logique, False si physiquement impossible (ex: quantité négative d'objets discrets).")
     motif_rejet: str = Field(description="Si invalide, expliquer brièvement l'erreur didactique.")
 
 def analyser_coherence_semantique(texte_reponse, client):
     """
     Fonction exécutive d'inhibition.
-    1. Utilise spaCy pour pré-détecter les nombres négatifs.
-    2. Si risque détecté, utilise Mistral (Structured Output via JSON) pour validation stricte.
+    1. Utilise Regex pour pré-détecter les nombres négatifs (économie d'appels API).
+    2. Si risque détecté, utilise Mistral pour structurer la validation dans le schéma Pydantic.
     """
-    doc = nlp(texte_reponse)
-    risque_negatif = any(token.text.startswith('-') and token.pos_ == "NUM" for token in doc)
+    # Détection native Python d'un signe moins suivi d'un chiffre (ex: "-2", "- 5")
+    risque_negatif = bool(re.search(r'-\s*\d+', texte_reponse))
     
     if not risque_negatif:
         return True, ""
 
-    # Si un risque est détecté, l'Agent Critique intervient via un appel rapide
     prompt_critique = f"""Analyse cette proposition pédagogique d'un tuteur :
 "{texte_reponse}"
-Détermine si elle contient une aberration didactique (ex: associer un nombre négatif à un objet physique dénombrable comme '-2 pommes').
-Réponds UNIQUEMENT au format JSON avec les clés : contient_analogie (bool), entites_physiques_detectees (list), quantites_associees (list), est_valide_physiquement (bool), motif_rejet (string)."""
+
+Détermine si elle contient une aberration didactique ou physique (ex: associer un nombre négatif à un objet physique dénombrable comme '-2 pommes').
+Tu DOIS répondre UNIQUEMENT au format JSON strict correspondant aux clés suivantes : 
+"contient_analogie", "entites_physiques_detectees", "est_valide_physiquement", "motif_rejet"."""
     
     try:
         reponse_critique = client.chat.completions.create(
@@ -125,10 +110,18 @@ Réponds UNIQUEMENT au format JSON avec les clés : contient_analogie (bool), en
             response_format={"type": "json_object"},
             temperature=0.0
         )
-        analyse = json.loads(reponse_critique.choices[0].message.content)
-        return analyse.get("est_valide_physiquement", True), analyse.get("motif_rejet", "")
-    except Exception:
-        return True, "" # En cas d'erreur de parsing, on laisse passer pour ne pas bloquer l'UX
+        json_str = reponse_critique.choices[0].message.content
+        
+        # Validation stricte du schéma via Pydantic V2
+        analyse = ValidationDidactique.model_validate_json(json_str)
+        return analyse.est_valide_physiquement, analyse.motif_rejet
+        
+    except ValidationError as e:
+        print(f"Échec de validation Pydantic de l'Agent Critique : {e}")
+        return True, "" # Faille gracieuse pour ne pas bloquer l'interface
+    except Exception as e:
+        print(f"Erreur Agent Critique : {e}")
+        return True, ""
 
 def simuler_stream(texte):
     """Générateur pour maintenir la fluidité UX."""
@@ -497,7 +490,7 @@ if st.session_state.session_active:
 
                 brouillon_texte = msg_ia.content
 
-                # ÉTAPE 3 : Vérification sémantique (Agent Critique via spaCy + Pydantic)
+                # ÉTAPE 3 : Vérification sémantique (Agent Critique via Pydantic + Regex)
                 est_valide, motif_rejet = analyser_coherence_semantique(brouillon_texte, client)
                 
                 # ÉTAPE 4 : Auto-correction si incohérence détectée
