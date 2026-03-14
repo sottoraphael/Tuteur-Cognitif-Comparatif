@@ -234,7 +234,7 @@ Objectif : Réduire la distance entre la compréhension actuelle de l'élève et
 <gestion_notations_mathematiques>
 - L'élève ne dispose pas de clavier mathématique. Il saisira ses formules en texte brut (ex: "racine de x", "3/4", "x au carre").
 - Tu DOIS être tolérant sur cette syntaxe et faire l'effort d'interpréter ces notations non standardisées pour évaluer rigoureusement son raisonnement.
-- Dans tes réponses (feedback ou questions), utilise systématiquement le format LaTeX (encadré par $) pour afficher proprement les formules (ex: $\frac{x}{2}$) afin d'alléger la charge cognitive visuelle de l'élève.
+- Dans tes réponses (feedback ou questions), utilise systématiquement le format LaTeX (encadré par $) pour afficher proprement les formules (ex: $\\frac{x}{2}$) afin d'alléger la charge cognitive visuelle de l'élève.
 </gestion_notations_mathematiques>
 
 <directives_guidage>
