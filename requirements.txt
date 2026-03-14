@@ -4,3 +4,4 @@ PyPDF2
 openai>=1.10.0
 sympy
 pydantic>=2.5.0
+spaCy
