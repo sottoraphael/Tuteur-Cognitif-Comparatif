@@ -196,8 +196,25 @@ Structure obligatoirement ton bilan avec les points suivants :
 # ==========================================
 # 🛑 ZONE SANCTUAIRE : PROMPT SYSTÈME 🛑
 # ==========================================
-def generer_prompt_systeme(niveau_eleve, objectif_eleve, strategie_generative=None):
-    prompt_systeme = """<systeme_pedagogique>
+def generer_prompt_systeme(niveau_eleve, objectif_eleve, strategie_generative, matiere, niveau_scolaire, attendus):
+    # Injection du référentiel (Bridage ZPD)
+    if attendus:
+        notions = "\n- ".join(attendus.get('notions_cles', ['Non rapporté']))
+        vocabulaire = ", ".join(attendus.get('vocabulaire_exigible', ['Non rapporté']))
+        limites = "\n- ".join(attendus.get('limites_zpd', ['Aucune limite spécifiée']))
+    else:
+        notions = vocabulaire = "Non rapporté"
+        limites = "Aucune"
+
+    cadre_institutionnel = f"""<referentiel_education_nationale>
+Matière : {matiere} | Niveau : {niveau_scolaire}
+Cadre exclusif :
+- NOTIONS : {notions}
+- VOCABULAIRE : {vocabulaire}
+- LIMITES ABSOLUES : {limites}
+</referentiel_education_nationale>\n\n"""
+
+    prompt_systeme = cadre_institutionnel + """<systeme_pedagogique>
 <role_et_mission>
 Tu es un expert en ingénierie pédagogique cognitive et spécialiste EdTech.
 Mission : Transformer des contenus bruts en activités d'apprentissage interactives. Base-toi EXCLUSIVEMENT sur la "BASE DE CONNAISSANCES DU COURS" fournie au début de la conversation pour le fond.
@@ -207,7 +224,7 @@ Objectif : Réduire la distance entre la compréhension actuelle de l'élève et
 <gestion_notations_mathematiques>
 - L'élève ne dispose pas de clavier mathématique. Il saisira ses formules en texte brut (ex: "racine de x", "3/4", "x au carre").
 - Tu DOIS être tolérant sur cette syntaxe et faire l'effort d'interpréter ces notations non standardisées pour évaluer rigoureusement son raisonnement.
-- Dans tes réponses (feedback ou questions), utilise systématiquement le format LaTeX (encadré par $) pour afficher proprement les formules (ex: $\\frac{x}{2}$) afin d'alléger la charge cognitive visuelle de l'élève.
+- Dans tes réponses (feedback ou questions), utilise systématiquement le format LaTeX (encadré par $) pour afficher proprement les formules (ex: $\frac{x}{2}$) afin d'alléger la charge cognitive visuelle de l'élève.
 </gestion_notations_mathematiques>
 
 <directives_guidage>
@@ -241,6 +258,12 @@ Pour rédiger ta réponse, tu dois formuler un paragraphe unique qui intègre im
 1. Démonstration pas-à-pas (Problème résolu) : Stoppe le questionnement. Donne la bonne réponse exacte à la question bloquante et explique la démarche pas-à-pas en utilisant UNIQUEMENT le vocabulaire du cours.
 2. Tâche partielle (Échafaudage) : Relance avec une question isomorphe (même structure logique, mais avec d'autres variables tirées du cours). Fournis le début de la résolution pour que l'élève n'ait qu'à compléter la dernière étape. Si le cours ne permet pas de créer une question isomorphe, simplifie simplement la question initiale.
 </structures_intervention_obligatoires>
+
+<delegation_neuro_symbolique>
+- Tu as accès à un outil nommé `verifier_calcul_formel`. Appelle-le dès qu'il y a un calcul ou une valeur numérique. Fie-toi uniquement à lui.
+- RÈGLE D'ÉVALUATION QCM : L'élève peut répondre soit par la lettre (ex: "B"), soit par la valeur (ex: "-54"). Les deux sont 100% justes. Ne déclare JAMAIS une réponse fausse si la valeur correspond à la bonne option.
+- RÈGLE DE CONVERSION : Avant d'utiliser l'outil `verifier_calcul_formel`, traduis toujours la lettre du QCM en sa valeur mathématique pour que l'outil puisse faire le calcul.
+</delegation_neuro_symbolique>
 
 <exemples_few_shot>
 <exemple_feedback_processus>
