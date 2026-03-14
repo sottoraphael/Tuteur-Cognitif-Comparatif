@@ -91,7 +91,7 @@ TOOLS = [{
 }]
 
 # ==========================================
-# MODULE 2 : AGENT CRITIQUE DIDACTIQUE (PYDANTIC + SPACY)
+# MODULE 2 : AGENT CRITIQUE DIDACTIQUE (PYDANTIC + SPACY AVANCÉ)
 # ==========================================
 class ValidationDidactique(BaseModel):
     contient_analogie: bool = Field(description="La réponse contient-elle une analogie ou un exemple concret ?")
@@ -101,16 +101,28 @@ class ValidationDidactique(BaseModel):
 
 def analyser_coherence_semantique(texte_reponse, client):
     """
-    Fonction exécutive d'inhibition.
-    1. Utilise spaCy pour pré-détecter les nombres négatifs (analyse syntaxique rigoureuse).
-    2. Si risque détecté, utilise Mistral pour structurer la validation dans le schéma Pydantic.
+    Fonction exécutive d'inhibition exploitant pleinement spaCy.
+    1. Mesure de la Charge Cognitive (Longueur et complexité syntaxique).
+    2. Détection de dissonances physiques (Nombres négatifs).
+    3. Validation sémantique par LLM (uniquement si nécessaire).
     """
     doc = nlp(texte_reponse)
+    
+    # 1. Filtre Symbolique : Protection de la mémoire de travail (Théorie de la Charge Cognitive)
+    # On identifie les phrases qui dépassent 30 mots (limite d'attention pour un collégien).
+    phrases_longues = [sent.text for sent in doc.sents if len([t for t in sent if not t.is_punct]) > 30]
+    
+    if phrases_longues:
+        motif = f"Surcharge cognitive détectée. Ta phrase est trop longue ({len(phrases_longues[0].split())} mots). Le cerveau d'un élève de collège sature. Fais des phrases courtes et scinde tes idées."
+        return False, motif
+
+    # 2. Filtre Sémantique local : Risque de nombre négatif absurde
     risque_negatif = any(token.text.startswith('-') and token.pos_ == "NUM" for token in doc)
     
     if not risque_negatif:
         return True, ""
 
+    # 3. Filtre Sémantique profond : LLM via Pydantic (Uniquement déclenché si un risque est repéré)
     prompt_critique = f"""Analyse cette proposition pédagogique d'un tuteur :
 "{texte_reponse}"
 
@@ -127,13 +139,12 @@ Tu DOIS répondre UNIQUEMENT au format JSON strict correspondant aux clés suiva
         )
         json_str = reponse_critique.choices[0].message.content
         
-        # Validation stricte du schéma via Pydantic V2
         analyse = ValidationDidactique.model_validate_json(json_str)
         return analyse.est_valide_physiquement, analyse.motif_rejet
         
     except ValidationError as e:
-        print(f"Échec de validation Pydantic de l'Agent Critique : {e}")
-        return True, "" # Faille gracieuse pour ne pas bloquer l'interface
+        print(f"Échec de validation Pydantic : {e}")
+        return True, "" 
     except Exception as e:
         print(f"Erreur Agent Critique : {e}")
         return True, ""
@@ -197,7 +208,6 @@ Structure obligatoirement ton bilan avec les points suivants :
 # 🛑 ZONE SANCTUAIRE : PROMPT SYSTÈME 🛑
 # ==========================================
 def generer_prompt_systeme(niveau_eleve, objectif_eleve, strategie_generative, matiere, niveau_scolaire, attendus):
-    # Injection du référentiel (Bridage ZPD)
     if attendus:
         notions = "\n- ".join(attendus.get('notions_cles', ['Non rapporté']))
         vocabulaire = ", ".join(attendus.get('vocabulaire_exigible', ['Non rapporté']))
@@ -394,8 +404,8 @@ Choisis la stratégie la plus pertinente si non précisée :
 </interdictions_strictes>
 </systeme_pedagogique>
 """
-
     return prompt_systeme
+
 # ==========================================
 # FONCTIONS D'EXTRACTION DE TEXTE
 # ==========================================
@@ -493,7 +503,6 @@ if st.session_state.session_active:
                 if not m.get("isHidden"): hist.append(m)
             
             try:
-                # Affichage du spinner pendant le traitement silencieux des agents
                 with st.spinner("L'IA analyse ta réponse..."):
                     # ÉTAPE 1 : Génération du brouillon (Agent Tuteur)
                     res_brouillon = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, tools=TOOLS, tool_choice="auto", temperature=0.1)
@@ -512,17 +521,15 @@ if st.session_state.session_active:
 
                     brouillon_texte = msg_ia.content
 
-                    # ÉTAPE 3 : Vérification sémantique (Agent Critique via Pydantic + Regex)
+                    # ÉTAPE 3 : Vérification sémantique (Agent Critique via SpaCy + Pydantic)
                     est_valide, motif_rejet = analyser_coherence_semantique(brouillon_texte, client)
                 
-                # ÉTAPE 4 : Auto-correction si incohérence détectée (Hors du spinner pour lancer le stream)
+                # ÉTAPE 4 : Auto-correction si incohérence détectée
                 if not est_valide:
-                    # Ajout d'une consigne exécutive d'inhibition
-                    hist.append({"role": "system", "content": f"ATTENTION (AUTO-CORRECTION) : Ta réponse précédente contenait une erreur didactique. Motif : {motif_rejet}. Régénère ta réponse en corrigeant ce point précis et en trouvant une analogie réaliste."})
+                    hist.append({"role": "system", "content": f"ATTENTION (INHIBITION SYMBOLIQUE) : {motif_rejet} Régénère ta réponse en corrigeant ce point précis."})
                     flux_final = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, stream=True, temperature=0.3)
                     rep = st.write_stream(extraire_texte_stream(flux_final))
                 else:
-                    # Si valide, on affiche simplement le brouillon
                     rep = st.write_stream(simuler_stream(brouillon_texte))
                 
                 st.session_state.messages.append({"role": "assistant", "content": rep})
