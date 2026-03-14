@@ -78,7 +78,7 @@ TOOLS = [{
     "type": "function",
     "function": {
         "name": "verifier_calcul_formel",
-        "description": "Vérifie l'exactitude mathématique d'une réponse élève par rapport à une solution.",
+        "description": "Vérifie l'exactitude mathématique d'une réponse élève par rapport à une solution. RÈGLE STRICTE : Si l'élève répond à un QCM par une lettre (ex: 'B'), tu DOIS convertir cette lettre en sa valeur mathématique correspondante avant de l'envoyer ici. N'envoie jamais de lettres isolées.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -225,15 +225,16 @@ Objectif : Réduire la distance entre la compréhension actuelle de l'élève et
 <gestion_notations_mathematiques>
 - L'élève ne dispose pas de clavier mathématique. Il saisira ses formules en texte brut (ex: "racine de x", "3/4", "x au carre").
 - Tu DOIS être tolérant sur cette syntaxe et faire l'effort d'interpréter ces notations non standardisées pour évaluer rigoureusement son raisonnement.
-- Dans tes réponses (feedback ou questions), utilise systématiquement le format LaTeX (encadré par $) pour afficher proprement les formules (ex: $\\frac{x}{2}$) afin d'alléger la charge cognitive visuelle de l'élève.
+- Dans tes réponses (feedback ou questions), utilise systématiquement le format LaTeX (encadré par $) pour afficher proprement les formules (ex: $\frac{x}{2}$) afin d'alléger la charge cognitive visuelle de l'élève.
 </gestion_notations_mathematiques>
 
 <directives_guidage>
 1. Flux interactif : Pose UNE SEULE question à la fois. Attends la réponse de l'élève.
 2. Maïeutique et Règle des 2 Itérations : Ne donne jamais la solution d'emblée. Fournis des indices (feedback de processus). CEPENDANT, si l'historique montre que l'élève a échoué 2 fois de suite sur la même question malgré tes indices, la limite de difficulté désirable est franchie. Tu DOIS cesser de questionner et déclencher silencieusement le Protocole de Remédiation.
 3. Concision : Feedbacks limités à 3 ou 4 phrases MAXIMUM pour laisser la place à l'explication métacognitive. Aucun cours magistral (sauf en phase de remédiation).
-4. Balayage intégral et Anti-stagnation : Scanne tout le document de haut en bas sans te limiter à l'introduction. À chaque nouvelle question, avance dans le cours. Passe au concept suivant dès que l'élève a juste, OU s'il échoue à la tâche partielle du Protocole de Remédiation. Dans ce dernier cas d'échec, donne-lui simplement la réponse finale de la tâche partielle avec bienveillance, et passe obligatoirement à la suite. Ne le bloque jamais indéfiniment.
-5. Clôture de session (Spaced Practice) : Dès que la fin du document est atteinte, stoppe le questionnement. Félicite l'élève, demande-lui de formuler son propre bilan métacognitif (ce qu'il a retenu ou compris), et invite-le explicitement à fermer la session pour y revenir dans quelques jours.
+4. Transparence Cognitive : Garde tes balises structurelles strictement invisibles pour l'élève (masque les titres comme "Diagnostic"). En revanche, sois explicite sur la méthode d'apprentissage en utilisant un vocabulaire simple, adapté à un élève. Nomme la stratégie que tu utilises (ex: "récupération en mémoire", "détection d'erreur", "démonstration") et justifie brièvement *pourquoi* elle est utile pour son cerveau (ex: "pour mémoriser plus longtemps", "pour éviter l'illusion de maîtrise", "pour forcer ton cerveau à faire des liens"). Ton texte visible doit rester naturel et conversationnel.
+5. Balayage intégral et Anti-stagnation : Scanne tout le document de haut en bas sans te limiter à l'introduction. À chaque nouvelle question, avance dans le cours. Passe au concept suivant dès que l'élève a juste, OU s'il échoue à la tâche partielle du Protocole de Remédiation. Dans ce dernier cas d'échec, donne-lui simplement la réponse finale de la tâche partielle avec bienveillance, et passe obligatoirement à la suite. Ne le bloque jamais indéfiniment.
+6. Clôture de session (Spaced Practice) : Dès que la fin du document est atteinte, stoppe le questionnement. Félicite l'élève, demande-lui de formuler son propre bilan métacognitif (ce qu'il a retenu ou compris), et invite-le explicitement à fermer la session pour y revenir dans quelques jours.
 </directives_guidage>
 
 <structures_intervention_obligatoires>
@@ -244,9 +245,9 @@ Pour rédiger ta réponse, tu dois formuler un paragraphe unique qui intègre im
 Intègre ces 3 étapes de manière fluide :
 1. Constat factuel : Valide ou invalide le résultat objectivement.
 2. Diagnostic : Identifie précisément la règle ou l'étape bloquante/réussie (Haute Info).
-3. Transparence et Levier (OBLIGATOIRE) : Nomme la stratégie utilisée et justifie son utilité pour le cerveau, puis donne ton indice. Utilise ce format : "Pour [bénéfice pour le cerveau], nous allons utiliser [nom de la stratégie] : [ton indice/analogie]". 
-Exemple : "Pour forcer ton cerveau à faire des liens, utilisons une analogie : pense à..." SANS donner la réponse finale. Interdiction stricte de dire simplement "relis le cours". Pousse l'élève à utiliser sa réflexion.
-
+3. Levier stratégique : Indique une méthode cognitive pour déduire la réponse (analogie, décomposition, indice logique basé sur le cours), SANS donner la réponse finale. Interdiction stricte de dire simplement "relis le cours". Pousse l'élève à utiliser sa réflexion.
+ Interdiction stricte de dire simplement "relis le cours".
+ 
 [Structure 2 : Feedback d'Autorégulation et Monitorage (Métacognition)]
 Intègre ces 3 étapes de manière fluide :
 1. Effet miroir : Décris la réponse de l'élève de manière factuelle, sans jugement.
@@ -260,6 +261,8 @@ Intègre ces 3 étapes de manière fluide :
 
 <delegation_neuro_symbolique>
 - Tu as accès à un outil nommé `verifier_calcul_formel`. Appelle-le dès qu'il y a un calcul ou une valeur numérique. Fie-toi uniquement à lui.
+- RÈGLE D'ÉVALUATION QCM : L'élève peut répondre soit par la lettre (ex: "B"), soit par la valeur (ex: "-54"). Les deux sont 100% justes. Ne déclare JAMAIS une réponse fausse si la valeur correspond à la bonne option.
+- RÈGLE DE CONVERSION : Avant d'utiliser l'outil `verifier_calcul_formel`, traduis toujours la lettre du QCM en sa valeur mathématique pour que l'outil puisse faire le calcul.
 </delegation_neuro_symbolique>
 
 <exemples_few_shot>
@@ -490,27 +493,29 @@ if st.session_state.session_active:
                 if not m.get("isHidden"): hist.append(m)
             
             try:
-                # ÉTAPE 1 : Génération du brouillon (Agent Tuteur)
-                res_brouillon = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, tools=TOOLS, tool_choice="auto", temperature=0.1)
-                msg_ia = res_brouillon.choices[0].message
-                
-                # ÉTAPE 2 : Traitement des outils mathématiques (SymPy)
-                if msg_ia.tool_calls:
-                    hist.append(msg_ia)
-                    for tc in msg_ia.tool_calls:
-                        args = json.loads(tc.function.arguments)
-                        verif = verifier_calcul_formel(args.get('expression_prof',''), args.get('expression_eleve',''))
-                        hist.append({"tool_call_id": tc.id, "role": "tool", "name": "verifier_calcul_formel", "content": json.dumps(verif)})
-                    
-                    res_brouillon = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, temperature=0.3)
+                # Affichage du spinner pendant le traitement silencieux des agents
+                with st.spinner("L'IA analyse ta réponse..."):
+                    # ÉTAPE 1 : Génération du brouillon (Agent Tuteur)
+                    res_brouillon = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, tools=TOOLS, tool_choice="auto", temperature=0.1)
                     msg_ia = res_brouillon.choices[0].message
+                    
+                    # ÉTAPE 2 : Traitement des outils mathématiques (SymPy)
+                    if msg_ia.tool_calls:
+                        hist.append(msg_ia)
+                        for tc in msg_ia.tool_calls:
+                            args = json.loads(tc.function.arguments)
+                            verif = verifier_calcul_formel(args.get('expression_prof',''), args.get('expression_eleve',''))
+                            hist.append({"tool_call_id": tc.id, "role": "tool", "name": "verifier_calcul_formel", "content": json.dumps(verif)})
+                        
+                        res_brouillon = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, temperature=0.3)
+                        msg_ia = res_brouillon.choices[0].message
 
-                brouillon_texte = msg_ia.content
+                    brouillon_texte = msg_ia.content
 
-                # ÉTAPE 3 : Vérification sémantique (Agent Critique via Pydantic + SpaCy)
-                est_valide, motif_rejet = analyser_coherence_semantique(brouillon_texte, client)
+                    # ÉTAPE 3 : Vérification sémantique (Agent Critique via Pydantic + Regex)
+                    est_valide, motif_rejet = analyser_coherence_semantique(brouillon_texte, client)
                 
-                # ÉTAPE 4 : Auto-correction si incohérence détectée
+                # ÉTAPE 4 : Auto-correction si incohérence détectée (Hors du spinner pour lancer le stream)
                 if not est_valide:
                     # Ajout d'une consigne exécutive d'inhibition
                     hist.append({"role": "system", "content": f"ATTENTION (AUTO-CORRECTION) : Ta réponse précédente contenait une erreur didactique. Motif : {motif_rejet}. Régénère ta réponse en corrigeant ce point précis et en trouvant une analogie réaliste."})
