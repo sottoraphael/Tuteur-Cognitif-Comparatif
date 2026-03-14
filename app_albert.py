@@ -5,7 +5,7 @@ import PyPDF2
 import sympy as sp
 import json
 import time
-import re
+import spacy
 from pydantic import BaseModel, Field, ValidationError
 
 # Fichier local contenant les programmes (ZPD)
@@ -29,6 +29,21 @@ st.markdown("""
 MAX_HISTORIQUE_MESSAGES = 6
 MODELE_ALBERT = "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
 ALBERT_BASE_URL = "https://albert.api.etalab.gouv.fr/v1"
+
+# ==========================================
+# CHARGEMENT DU MODÈLE NLP LOCAL (SPACY)
+# ==========================================
+@st.cache_resource
+def charger_modele_nlp():
+    """Charge le modèle linguistique français en RAM pour une analyse souveraine."""
+    try:
+        return spacy.load("fr_core_news_md")
+    except OSError:
+        import subprocess
+        subprocess.run(["python", "-m", "spacy", "download", "fr_core_news_md"])
+        return spacy.load("fr_core_news_md")
+
+nlp = charger_modele_nlp()
 
 # ==========================================
 # GESTION DE L'ÉTAT DE SESSION (State)
@@ -76,7 +91,7 @@ TOOLS = [{
 }]
 
 # ==========================================
-# MODULE 2 : AGENT CRITIQUE DIDACTIQUE (PYDANTIC + REGEX)
+# MODULE 2 : AGENT CRITIQUE DIDACTIQUE (PYDANTIC + SPACY)
 # ==========================================
 class ValidationDidactique(BaseModel):
     contient_analogie: bool = Field(description="La réponse contient-elle une analogie ou un exemple concret ?")
@@ -87,11 +102,11 @@ class ValidationDidactique(BaseModel):
 def analyser_coherence_semantique(texte_reponse, client):
     """
     Fonction exécutive d'inhibition.
-    1. Utilise Regex pour pré-détecter les nombres négatifs (économie d'appels API).
+    1. Utilise spaCy pour pré-détecter les nombres négatifs (analyse syntaxique rigoureuse).
     2. Si risque détecté, utilise Mistral pour structurer la validation dans le schéma Pydantic.
     """
-    # Détection native Python d'un signe moins suivi d'un chiffre (ex: "-2", "- 5")
-    risque_negatif = bool(re.search(r'-\s*\d+', texte_reponse))
+    doc = nlp(texte_reponse)
+    risque_negatif = any(token.text.startswith('-') and token.pos_ == "NUM" for token in doc)
     
     if not risque_negatif:
         return True, ""
@@ -182,6 +197,7 @@ Structure obligatoirement ton bilan avec les points suivants :
 # 🛑 ZONE SANCTUAIRE : PROMPT SYSTÈME 🛑
 # ==========================================
 def generer_prompt_systeme(niveau_eleve, objectif_eleve, strategie_generative, matiere, niveau_scolaire, attendus):
+    # Injection du référentiel (Bridage ZPD)
     if attendus:
         notions = "\n- ".join(attendus.get('notions_cles', ['Non rapporté']))
         vocabulaire = ", ".join(attendus.get('vocabulaire_exigible', ['Non rapporté']))
@@ -198,6 +214,7 @@ Cadre exclusif :
 - LIMITES ABSOLUES : {limites}
 </referentiel_education_nationale>\n\n"""
 
+    # --- VOTRE PROMPT EXACT ---
     prompt_systeme = cadre_institutionnel + """<systeme_pedagogique>
 <role_et_mission>
 Tu es un expert en ingénierie pédagogique cognitive et spécialiste EdTech.
@@ -295,7 +312,7 @@ L'élève possède les bases mais peut faire des étourderies.
   C) [Choix 3]
   D) [Choix 4]
 - L'une des options doit être la bonne réponse, les autres doivent être les leurres définis ci-dessus.
-- Génère ce QCM dès ta première prise de parole et garde là jusqu'à la fin.
+- Génère ce QCM dès ta première prise de parole.
 </format_question_obligatoire>
 </constitution_pedagogique>
 """
@@ -490,7 +507,7 @@ if st.session_state.session_active:
 
                 brouillon_texte = msg_ia.content
 
-                # ÉTAPE 3 : Vérification sémantique (Agent Critique via Pydantic + Regex)
+                # ÉTAPE 3 : Vérification sémantique (Agent Critique via Pydantic + SpaCy)
                 est_valide, motif_rejet = analyser_coherence_semantique(brouillon_texte, client)
                 
                 # ÉTAPE 4 : Auto-correction si incohérence détectée
@@ -509,4 +526,3 @@ if st.session_state.session_active:
                 st.error(f"Erreur d'exécution : {e}")
 else:
     st.info("👈 Règle tes paramètres et charge ton cours pour commencer.")
-
