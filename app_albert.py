@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 from openai import OpenAI
 import PyPDF2
 import sympy as sp
@@ -7,13 +6,12 @@ from sympy.parsing.sympy_parser import parse_expr, standard_transformations, imp
 import json
 import time
 import spacy
-from pydantic import BaseModel, Field, ValidationError
+import sys
+import subprocess
+from pydantic import BaseModel, Field
 
-# ==========================================
-# RÉFÉRENTIELS & ATTENDUS (MOCK COMPLET)
-# ==========================================
+# Mock pour permettre le fonctionnement sans le fichier complet referentiels.py
 class MockReferentiels:
-    """Base de connaissances simulant les programmes officiels d'Éduscol."""
     REFERENTIEL_COLLEGE = {
         "Mathématiques": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
         "Français": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
@@ -41,31 +39,6 @@ class MockReferentiels:
                 "vocabulaire_exigible": ["métaphore", "imparfait", "focalisation", "champ lexical", "connecteur logique"],
                 "limites_zpd": ["Ne pas exiger l'analyse de subordonnées conjonctives complexes"]
             }
-        elif matiere == "Histoire-Géographie & EMC":
-            return {
-                "notions_cles": ["Guerres mondiales", "Guerre froide", "Décolonisation", "Mondialisation"],
-                "vocabulaire_exigible": ["tranchée", "propagande", "bipolarisation", "indépendance", "flux"],
-                "limites_zpd": ["Ne pas exiger de dates hors du socle commun"]
-            }
-        elif matiere == "Physique-Chimie":
-            return {
-                "notions_cles": ["Masse volumique", "Atomes et molécules", "Lois de l'électricité"],
-                "vocabulaire_exigible": ["ion", "intensité", "tension", "pH", "réactif", "produit"],
-                "limites_zpd": ["Ne pas exiger le calcul de la constante de Planck", "Pas d'équations de mécanique quantique"]
-            }
-        elif matiere == "SVT":
-            return {
-                "notions_cles": ["Génétique", "Évolution", "Système nerveux"],
-                "vocabulaire_exigible": ["ADN", "allèle", "neurone", "synapse", "sélection naturelle"],
-                "limites_zpd": ["Pas de détails biochimiques complexes sur la transcription de l'ADN"]
-            }
-        elif matiere == "Technologie":
-            return {
-                "notions_cles": ["Design et innovation", "Programmation d'objets", "Impact environnemental"],
-                "vocabulaire_exigible": ["chaîne d'énergie", "chaîne d'information", "algorithme", "capteur"],
-                "limites_zpd": ["Pas de modélisation mathématique complexe des transferts thermiques"]
-            }
-        # Valeur par défaut pour les autres matières
         return {
             "notions_cles": ["Notions fondamentales de la discipline"],
             "vocabulaire_exigible": ["Vocabulaire de base du cycle"],
@@ -126,17 +99,10 @@ if "texte_bilan" not in st.session_state: st.session_state.texte_bilan = ""
 # SCHÉMAS PYDANTIC (MÉTACOGNITION IA)
 # ==========================================
 class ReflexionTuteur(BaseModel):
-    """Schéma imposant la réflexion avant l'action (Inhibition)."""
-    diagnostic_interne: str = Field(description="Analyse factuelle de la réponse de l'élève. Invisible pour l'élève.")
+    """Schéma imposant la réflexion avant l'action (Inhibition). Optimisé pour regrouper le diagnostic et la vérification."""
+    diagnostic_interne: str = Field(description="Analyse factuelle de la réponse de l'élève et vérification stricte de la faisabilité physique/logique des analogies employées.")
     strategie_choisie: str = Field(description="Catégorisation stricte de l'intervention (ex: Feedback de Processus, Remédiation, etc.).")
     reponse_visible: str = Field(description="Le texte final adressé à l'élève, respectant le format LaTeX et la Transparence Cognitive.")
-
-class ValidationDidactique(BaseModel):
-    """Schéma de l'Agent Critique."""
-    contient_analogie: bool = Field(description="La réponse contient-elle une analogie ou un exemple concret ?")
-    entites_physiques_detectees: list[str] = Field(description="Liste des objets physiques mentionnés.")
-    est_valide_physiquement: bool = Field(description="True si l'analogie est logique, False si physiquement impossible (ex: pomme négative).")
-    motif_rejet: str = Field(description="Explication brève en cas d'aberration didactique.")
 
 # ==========================================
 # PROGRAMMATION ORIENTÉE OBJET (AGENTS)
@@ -160,43 +126,36 @@ class AgentMathematique:
             
             # Cast strict en booléen Python pour éviter les erreurs de sérialisation JSON API
             return {"est_valide": bool(est_valide), "forme_simplifiee_eleve": str(exp_e)}
-        except Exception as e:
-            return {"erreur": f"Syntaxe non reconnue par le moteur. Demande à l'élève de clarifier sa formule."}
+        except Exception:
+            return {"erreur": "Syntaxe non reconnue par le moteur. Demande à l'élève de clarifier sa formule."}
 
 class AgentCritique:
-    """Filtre exécutif basé sur NLP (spaCy)."""
+    """Filtre exécutif basé sur NLP local (spaCy). Ultra-rapide et déconnecté du réseau."""
     def __init__(self):
         try:
             self.nlp = spacy.load("fr_core_news_sm")
         except OSError:
-            import subprocess
-            subprocess.run(["python", "-m", "spacy", "download", "fr_core_news_sm"])
+            # Optimisation : Utilisation de sys.executable pour garantir le téléchargement dans le bon venv
+            subprocess.run([sys.executable, "-m", "spacy", "download", "fr_core_news_sm"], check=True)
             self.nlp = spacy.load("fr_core_news_sm")
 
-    def analyser(self, texte_reponse, client):
+    def analyser(self, texte_reponse):
         doc = self.nlp(texte_reponse)
+        # Mesure de la surcharge cognitive (Phrase de plus de 30 mots hors ponctuation)
         phrases_longues = [sent.text for sent in doc.sents if len([t for t in sent if not t.is_punct]) > 30]
         if phrases_longues:
-            return False, f"Surcharge cognitive. Ta phrase est trop longue ({len(phrases_longues[0].split())} mots). Scinde tes idées."
+            return False, f"Surcharge cognitive détectée. Ta phrase est trop longue ({len(phrases_longues[0].split())} mots). Scinde tes idées en phrases plus courtes."
 
+        # Filtrage lexical déterministe (Ex: blocage des pommes négatives)
         risque_negatif = any(token.text.startswith('-') and token.pos_ == "NUM" for token in doc)
-        if not risque_negatif:
-            return True, ""
+        if risque_negatif:
+             for token in doc:
+                 if token.text.startswith('-') and token.pos_ == "NUM":
+                     # Si le mot suivant est un nom commun physique (ex: pomme, objet)
+                     if token.i + 1 < len(doc) and doc[token.i + 1].pos_ == "NOUN":
+                         return False, "Aberration physique détectée. On ne peut pas posséder une quantité négative d'objets physiques. Adapte ton analogie (température, dette)."
 
-        prompt_critique = f"""Analyse cette proposition pédagogique d'un tuteur : "{texte_reponse}"
-Détermine si elle contient une aberration didactique ou physique."""
-        try:
-            reponse = client.chat.completions.create(
-                model=MODELE_ALBERT,
-                messages=[{"role": "user", "content": prompt_critique}],
-                response_format={"type": "json_object"},
-                temperature=0.0
-            )
-            analyse = ValidationDidactique.model_validate_json(reponse.choices[0].message.content)
-            return analyse.est_valide_physiquement, analyse.motif_rejet
-        except Exception as e:
-            print(f"Erreur Agent Critique : {e}")
-            return True, ""
+        return True, ""
 
 class AgentResumeur:
     """Mémoire à long terme (Consolidation) pour éviter la dérive thématique."""
@@ -261,13 +220,13 @@ Objectif : Réduire la distance entre la compréhension actuelle de l'élève et
 2. Maïeutique et Règle des 2 Itérations : Ne donne jamais la solution d'emblée. Fournis des indices (feedback de processus). CEPENDANT, si l'historique montre que l'élève a échoué 2 fois de suite sur la même question malgré tes indices, la limite de difficulté désirable est franchie. Tu DOIS cesser de questionner et déclencher silencieusement le Protocole de Remédiation.
 3. Concision : Feedbacks limités à 3 ou 4 phrases MAXIMUM pour laisser la place à l'explication métacognitive. Aucun cours magistral (sauf en phase de remédiation).
 4. Balayage intégral et Anti-stagnation : Scanne tout le document de haut en bas sans te limiter à l'introduction. À chaque nouvelle question, avance dans le cours. Passe au concept suivant dès que l'élève a juste, OU s'il échoue à la tâche partielle du Protocole de Remédiation. Dans ce dernier cas d'échec, donne-lui simplement la réponse finale de la tâche partielle avec bienveillance, et passe obligatoirement à la suite. Ne le bloque jamais indéfiniment.
-5. Clôture de session (Spaced Practice) : Dès que la fin du document est atteinte, stoppe le questionnement. Félicite l'élève, demande-lui de formuler son propre bilan métacognitif (ce qu'il a retenu ou compris), et invite-le explicitement à fermer la session pour y revenir dans quelques jours.
+5. Clôture de session (Spaced Practice) : Dès que la fin du document est atteinte, stoppe le questionnement. Félicite l'élève et invite-le explicitement à fermer la session pour lire son bilan métacognitif et revenir à son cours dans quelques jours.
 </directives_guidage>
 
 <transparence_cognitive_obligatoire>
 Garde tes balises structurelles invisibles pour l'élève. En revanche, sois explicite sur la méthode utilisée avec des mots simples. 
-- En Mode Mémorisation : Précise que tu utilises "l'effort de mémoire" (chercher la réponse dans sa tête) pour que le cerveau s'en souvienne plus longtemps.
-- En Mode Compréhension : Nomme l'exercice ("trouver l'erreur", "deviner grâce aux indices") et précise que c'est pour vérifier que son cerveau a bien créé les liens entre les idées.
+- En Mode Mémorisation : Précise que tu utilises "la récupération en mémoire" (chercher la réponse dans sa tête) pour que le cerveau s'en souvienne plus longtemps.
+- En Mode Compréhension : Nomme le type d'exercice ("trouver l'erreur", "deviner grâce aux indices") et précise que c'est pour vérifier que son cerveau a bien créé les liens entre les idées.
 </transparence_cognitive_obligatoire>
 
 <structures_intervention_obligatoires>
@@ -276,7 +235,7 @@ Pour rédiger ta réponse, tu dois formuler un paragraphe unique qui intègre im
 [Structure 1 : Feedback de Processus (HAUTE TENEUR INFORMATIVE)]
 1. Le constat (L'observation) : Décris ce que tu vois, sans juger. Valide ou invalide le résultat. (Ex : "Ton calcul est faux...", "C'est une très bonne réponse...")
 2. L'explication (Le diagnostic) : C'est le moment "Haute Info". Explique précisément quelle règle ou quelle étape a posé problème ou permis de réussir. (Ex : "...car tu as confondu le diamètre et le rayon dans ton calcul...")
-3. Le conseil (Le levier de guidage) : Intègre ici ta Transparence Cognitive, puis donne une stratégie simple pour avancer sans donner la réponse finale. Ton analogie doit être physiquement réaliste (évite les pommes négatives).
+3. Le conseil (Le levier de guidage) : Intègre ici ta Transparence Cognitive, puis donne une stratégie simple pour avancer sans donner la réponse finale. (Ex : "Pour comprendre ton erreur, vérifie tes données sur ta fiche-outil avant de recalculer.")
 
 [Structure 2 : Feedback d'Autorégulation (Apprendre à se surveiller)]
 1. Le miroir (L'observation) : Décris ce que tu vois de l'attitude de l'élève sans juger. (Ex : "Je vois que tu as changé d'avis plusieurs fois...")
@@ -287,6 +246,17 @@ Pour rédiger ta réponse, tu dois formuler un paragraphe unique qui intègre im
 1. Démonstration pas-à-pas (Problème résolu) : Stoppe le questionnement. Donne la bonne réponse exacte à la question bloquante et explique la démarche pas-à-pas.
 2. Tâche partielle (Échafaudage) : Relance avec une question isomorphe.
 </structures_intervention_obligatoires>
+
+<exemples_few_shot>
+<exemple_feedback_processus>
+"Ton résultat est inexact car tu as fait l'addition avant la multiplication, oubliant l'ordre de priorité des calculs. Pour aider ton cerveau à bien s'organiser, nous allons utiliser les priorités opératoires : quelle opération le cours demande-t-il de faire en premier ici ?"
+</exemple_feedback_processus>
+
+<exemple_feedback_autoregulation>
+"Je remarque que tu as répondu très vite à cette question. Pour bien surveiller ton travail et éviter les pièges, activons ton radar : à quel moment as-tu vérifié si ta réponse correspondait bien à la chronologie du texte ? Quel indice du document pourrait te confirmer ton choix ?"
+</exemple_feedback_autoregulation>
+</exemples_few_shot>
+"""
 
 <delegation_neuro_symbolique>
 - Tu as accès à un outil nommé `verifier_calcul_formel`. Appelle-le dès qu'il y a un calcul ou une valeur numérique. Fie-toi uniquement à lui.
@@ -520,7 +490,8 @@ if st.session_state.session_active:
         if len(st.session_state.messages) == 0:
             with st.chat_message("assistant"):
                 ctx = [{"role": "system", "content": prompt_sys},
-                       {"role": "user", "content": f"COURS :\n{st.session_state.texte_cours_integral[:15000]}\n\nCommence l'exercice."}]
+                       # OPTIMISATION : Transmission d'une fraction beaucoup plus généreuse du cours (40000 caractères au lieu de 15000)
+                       {"role": "user", "content": f"COURS :\n{st.session_state.texte_cours_integral[:40000]}\n\nCommence l'exercice."}]
                 flux = client.chat.completions.create(model=MODELE_ALBERT, messages=ctx, temperature=0.3)
                 rep = st.write(flux.choices[0].message.content)
                 st.session_state.messages.append({"role": "user", "content": "[Document transmis]", "isHidden": True})
@@ -554,7 +525,8 @@ if st.session_state.session_active:
                         "content": f"<memoire_long_terme>Résumé de l'historique : {st.session_state.resume_memoire}</memoire_long_terme>"
                     })
                 
-                hist.append({"role": "user", "content": f"COURS : {st.session_state.texte_cours_integral[:5000]}"})
+                # OPTIMISATION : Maintien du contexte long dans la fenêtre active (prévention de l'hallucination)
+                hist.append({"role": "user", "content": f"COURS : {st.session_state.texte_cours_integral[:40000]}"})
                 
                 fenetre_active = messages_api[st.session_state.index_resume:]
                 hist.extend(fenetre_active)
@@ -576,7 +548,6 @@ if st.session_state.session_active:
                                 hist.append({"tool_call_id": tc.id, "role": "tool", "name": "verifier_calcul_formel", "content": json.dumps(verif)})
 
                         # 4. INHIBITION & RÉFLEXION (Pydantic)
-                        # Injection stricte de la directive JSON dans le prompt système pour respecter la séquence API Mistral (assistant -> user/system interdit)
                         hist[0]["content"] += "\n\n<directive_interne>FORMAT STRICT : Tu DOIS répondre EXCLUSIVEMENT sous la forme d'un objet JSON contenant les 3 clés suivantes : 'diagnostic_interne', 'strategie_choisie', et 'reponse_visible'.</directive_interne>"
 
                         res_reflexion = client.chat.completions.create(
@@ -590,8 +561,8 @@ if st.session_state.session_active:
                         reflexion = ReflexionTuteur.model_validate_json(json_str)
                         texte_final = reflexion.reponse_visible
                         
-                        # 5. FILTRE EXÉCUTIF (spaCy)
-                        est_valide, motif_rejet = agent_critique.analyser(texte_final, client)
+                        # 5. FILTRE EXÉCUTIF LOCAL (spaCy) - OPTIMISÉ POUR NE PAS FAIRE D'APPEL RÉSEAU REDONDANT
+                        est_valide, motif_rejet = agent_critique.analyser(texte_final)
                     
                     # 6. AUTO-CORRECTION OU AFFICHAGE
                     if not est_valide:
