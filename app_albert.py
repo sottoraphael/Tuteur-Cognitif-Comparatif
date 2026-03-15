@@ -3,12 +3,81 @@ import streamlit.components.v1 as components
 from openai import OpenAI
 import PyPDF2
 import sympy as sp
+from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
 import json
 import time
 import spacy
 from pydantic import BaseModel, Field, ValidationError
 
-import referentiels 
+# ==========================================
+# RÉFÉRENTIELS & ATTENDUS (MOCK COMPLET)
+# ==========================================
+class MockReferentiels:
+    """Base de connaissances simulant les programmes officiels d'Éduscol."""
+    REFERENTIEL_COLLEGE = {
+        "Mathématiques": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
+        "Français": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
+        "Histoire-Géographie & EMC": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
+        "SVT": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
+        "Physique-Chimie": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
+        "Technologie": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
+        "Anglais (LVA)": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
+        "Arts Plastiques": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
+        "Éducation Musicale": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
+        "EPS": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}}
+    }
+    
+    @staticmethod
+    def obtenir_attendus(matiere, niveau):
+        if matiere == "Mathématiques":
+            return {
+                "notions_cles": ["Priorités opératoires", "Fractions", "Équations", "Théorème de Thalès/Pythagore"],
+                "vocabulaire_exigible": ["addition", "multiplication", "inconnue", "simplifier", "dénominateur", "hypoténuse"],
+                "limites_zpd": ["Ne pas aborder les nombres complexes", "Ne pas utiliser de calcul matriciel"]
+            }
+        elif matiere == "Français":
+            return {
+                "notions_cles": ["Figures de style", "Narrateur", "Temps du récit", "Argumentation"],
+                "vocabulaire_exigible": ["métaphore", "imparfait", "focalisation", "champ lexical", "connecteur logique"],
+                "limites_zpd": ["Ne pas exiger l'analyse de subordonnées conjonctives complexes"]
+            }
+        elif matiere == "Histoire-Géographie & EMC":
+            return {
+                "notions_cles": ["Guerres mondiales", "Guerre froide", "Décolonisation", "Mondialisation"],
+                "vocabulaire_exigible": ["tranchée", "propagande", "bipolarisation", "indépendance", "flux"],
+                "limites_zpd": ["Ne pas exiger de dates hors du socle commun"]
+            }
+        elif matiere == "Physique-Chimie":
+            return {
+                "notions_cles": ["Masse volumique", "Atomes et molécules", "Lois de l'électricité"],
+                "vocabulaire_exigible": ["ion", "intensité", "tension", "pH", "réactif", "produit"],
+                "limites_zpd": ["Ne pas exiger le calcul de la constante de Planck", "Pas d'équations de mécanique quantique"]
+            }
+        elif matiere == "SVT":
+            return {
+                "notions_cles": ["Génétique", "Évolution", "Système nerveux"],
+                "vocabulaire_exigible": ["ADN", "allèle", "neurone", "synapse", "sélection naturelle"],
+                "limites_zpd": ["Pas de détails biochimiques complexes sur la transcription de l'ADN"]
+            }
+        elif matiere == "Technologie":
+            return {
+                "notions_cles": ["Design et innovation", "Programmation d'objets", "Impact environnemental"],
+                "vocabulaire_exigible": ["chaîne d'énergie", "chaîne d'information", "algorithme", "capteur"],
+                "limites_zpd": ["Pas de modélisation mathématique complexe des transferts thermiques"]
+            }
+        # Valeur par défaut pour les autres matières
+        return {
+            "notions_cles": ["Notions fondamentales de la discipline"],
+            "vocabulaire_exigible": ["Vocabulaire de base du cycle"],
+            "limites_zpd": ["Rester strictement dans le cadre des attendus de fin d'année d'Éduscol"]
+        }
+
+try:
+    import referentiels
+    if not hasattr(referentiels, 'REFERENTIEL_COLLEGE'):
+        referentiels = MockReferentiels
+except ImportError:
+    referentiels = MockReferentiels
 
 # ==========================================
 # CONFIGURATION DE LA PAGE & CSS
@@ -45,9 +114,13 @@ if "niveau_scolaire" not in st.session_state: st.session_state.niveau_scolaire =
 if "attendus" not in st.session_state: st.session_state.attendus = None
 if "api_key" not in st.session_state: st.session_state.api_key = ""
 
-# Variables pour la Mémoire de Travail (Étape 2)
+# Variables pour la Mémoire de Travail
 if "resume_memoire" not in st.session_state: st.session_state.resume_memoire = ""
 if "index_resume" not in st.session_state: st.session_state.index_resume = 0
+
+# Variables pour la gestion des vues et du bilan métacognitif
+if "phase" not in st.session_state: st.session_state.phase = 'chat'
+if "texte_bilan" not in st.session_state: st.session_state.texte_bilan = ""
 
 # ==========================================
 # SCHÉMAS PYDANTIC (MÉTACOGNITION IA)
@@ -62,23 +135,33 @@ class ValidationDidactique(BaseModel):
     """Schéma de l'Agent Critique."""
     contient_analogie: bool = Field(description="La réponse contient-elle une analogie ou un exemple concret ?")
     entites_physiques_detectees: list[str] = Field(description="Liste des objets physiques mentionnés.")
-    est_valide_physiquement: bool = Field(description="True si l'analogie est logique, False si physiquement impossible.")
+    est_valide_physiquement: bool = Field(description="True si l'analogie est logique, False si physiquement impossible (ex: pomme négative).")
     motif_rejet: str = Field(description="Explication brève en cas d'aberration didactique.")
 
 # ==========================================
 # PROGRAMMATION ORIENTÉE OBJET (AGENTS)
 # ==========================================
 class AgentMathematique:
-    """Moteur symbolique déterministe (SymPy)."""
+    """Moteur symbolique déterministe (SymPy) avec tolérance syntaxique."""
     @staticmethod
     def verifier(expression_prof, expression_eleve):
         try:
-            exp_p = sp.simplify(str(expression_prof).replace('^', '**'))
-            exp_e = sp.simplify(str(expression_eleve).replace('^', '**'))
+            # Tolérance cognitive : gère la multiplication implicite (ex: 2x -> 2*x)
+            transformations = (standard_transformations + (implicit_multiplication_application,))
+            
+            # Gestion des virgules françaises et des puissances
+            exp_p_str = str(expression_prof).replace('^', '**').replace(',', '.')
+            exp_e_str = str(expression_eleve).replace('^', '**').replace(',', '.')
+            
+            exp_p = parse_expr(exp_p_str, transformations=transformations)
+            exp_e = parse_expr(exp_e_str, transformations=transformations)
+            
             est_valide = sp.simplify(exp_p - exp_e) == 0
-            return {"est_valide": est_valide, "forme_simplifiee_eleve": str(exp_e)}
-        except Exception:
-            return {"erreur": "Syntaxe mathématique non reconnue. Demande à l'élève de clarifier."}
+            
+            # Cast strict en booléen Python pour éviter les erreurs de sérialisation JSON API
+            return {"est_valide": bool(est_valide), "forme_simplifiee_eleve": str(exp_e)}
+        except Exception as e:
+            return {"erreur": f"Syntaxe non reconnue par le moteur. Demande à l'élève de clarifier sa formule."}
 
 class AgentCritique:
     """Filtre exécutif basé sur NLP (spaCy)."""
@@ -193,33 +276,23 @@ Pour rédiger ta réponse, tu dois formuler un paragraphe unique qui intègre im
 [Structure 1 : Feedback de Processus (HAUTE TENEUR INFORMATIVE)]
 1. Le constat (L'observation) : Décris ce que tu vois, sans juger. Valide ou invalide le résultat. (Ex : "Ton calcul est faux...", "C'est une très bonne réponse...")
 2. L'explication (Le diagnostic) : C'est le moment "Haute Info". Explique précisément quelle règle ou quelle étape a posé problème ou permis de réussir. (Ex : "...car tu as confondu le diamètre et le rayon dans ton calcul...")
-3. Le conseil (Le levier de guidage) : Intègre ici ta Transparence Cognitive, puis donne une stratégie simple pour avancer sans donner la réponse finale. (Ex : "Pour forcer ton cerveau à faire des liens, vérifie tes données sur ta fiche-outil avant de recalculer.")
+3. Le conseil (Le levier de guidage) : Intègre ici ta Transparence Cognitive, puis donne une stratégie simple pour avancer sans donner la réponse finale. Ton analogie doit être physiquement réaliste (évite les pommes négatives).
 
 [Structure 2 : Feedback d'Autorégulation (Apprendre à se surveiller)]
-1. Le miroir (L'observation) : Décris ce que tu vois de l'attitude de l'élève sans juger. (Ex : "Je vois que tu as changé d'avis plusieurs fois...", "Je remarque que tu as répondu très vite...")
-2. Le radar (L'interrogation) : Intègre ici ta Transparence Cognitive, puis pose une question pour qu'il surveille lui-même son travail. (Ex : "Pour bien surveiller ton travail, à quel moment as-tu senti que ça ne marchait plus ?")
-3. Le coup de pouce (L'ouverture) : Pousse l'élève à décider de la suite sans donner la réponse. (Ex : "Quelle astuce peux-tu utiliser pour vérifier ce point ?")
+1. Le miroir (L'observation) : Décris ce que tu vois de l'attitude de l'élève sans juger. (Ex : "Je vois que tu as changé d'avis plusieurs fois...")
+2. Le radar (L'interrogation) : Intègre ici ta Transparence Cognitive, puis pose une question pour qu'il surveille lui-même son travail.
+3. Le coup de pouce (L'ouverture) : Pousse l'élève à décider de la suite sans donner la réponse.
 
 [Structure 3 : Protocole de Remédiation (À déclencher EXCLUSIVEMENT après 2 échecs consécutifs)]
-1. Démonstration pas-à-pas (Problème résolu) : Stoppe le questionnement. Donne la bonne réponse exacte à la question bloquante et explique la démarche pas-à-pas en utilisant UNIQUEMENT le vocabulaire du cours.
-2. Tâche partielle (Échafaudage) : Relance avec une question isomorphe (même structure logique, mais avec d'autres variables tirées du cours). Fournis le début de la résolution pour que l'élève n'ait qu'à compléter la dernière étape. Si le cours ne permet pas de créer une question isomorphe, simplifie simplement la question initiale.
+1. Démonstration pas-à-pas (Problème résolu) : Stoppe le questionnement. Donne la bonne réponse exacte à la question bloquante et explique la démarche pas-à-pas.
+2. Tâche partielle (Échafaudage) : Relance avec une question isomorphe.
 </structures_intervention_obligatoires>
 
 <delegation_neuro_symbolique>
 - Tu as accès à un outil nommé `verifier_calcul_formel`. Appelle-le dès qu'il y a un calcul ou une valeur numérique. Fie-toi uniquement à lui.
-- RÈGLE D'ÉVALUATION QCM : L'élève peut répondre soit par la lettre (ex: "B"), soit par la valeur (ex: "-54"). Les deux sont 100% justes. Ne déclare JAMAIS une réponse fausse si la valeur correspond à la bonne option.
+- RÈGLE D'ÉVALUATION QCM : L'élève peut répondre soit par la lettre (ex: "B"), soit par la valeur. Les deux sont 100% justes.
 - RÈGLE DE CONVERSION : Avant d'utiliser l'outil `verifier_calcul_formel`, traduis toujours la lettre du QCM en sa valeur mathématique pour que l'outil puisse faire le calcul.
 </delegation_neuro_symbolique>
-
-<exemples_few_shot>
-<exemple_feedback_processus>
-"Ton résultat est inexact car tu as fait l'addition avant la multiplication, oubliant l'ordre de priorité des calculs. Pour aider ton cerveau à bien s'organiser, nous allons utiliser les priorités opératoires : quelle opération le cours demande-t-il de faire en premier ici ?"
-</exemple_feedback_processus>
-
-<exemple_feedback_autoregulation>
-"Je remarque que tu as répondu très vite à cette question. Pour bien surveiller ton travail et éviter les pièges, activons ton radar : à quel moment as-tu vérifié si ta réponse correspondait bien à la chronologie du texte ? Quel indice du document pourrait te confirmer ton choix ?"
-</exemple_feedback_autoregulation>
-</exemples_few_shot>
 """
 
     if niveau_eleve == "Novice":
@@ -253,15 +326,8 @@ L'élève possède les bases mais peut faire des étourderies.
         if niveau_eleve == "Novice":
             prompt_systeme += """
 <format_question_obligatoire niveau="novice">
-- RÈGLE ABSOLUE : Tu dois formuler TOUTES tes questions (y compris la toute première) sous la forme d'un QCM.
-- Structure exigée : Pose ta question, puis propose 3 ou 4 options en allant à la ligne entre chaque option.
-- Les réponses doivent être présentées STRICTEMENT de la manière suivante : 
-  A) [Choix 1]
-  B) [Choix 2]
-  C) [Choix 3]
-  D) [Choix 4]
-- L'une des options doit être la bonne réponse, les autres doivent être les leurres définis ci-dessus.
-- Génère ce QCM dès ta première prise de parole.
+- RÈGLE ABSOLUE : Tu dois formuler TOUTES tes questions sous la forme d'un QCM.
+- Structure exigée : Pose ta question, puis propose 3 ou 4 options en allant à la ligne entre chaque option (A, B, C, D).
 </format_question_obligatoire>
 </constitution_pedagogique>
 """
@@ -275,25 +341,24 @@ L'élève possède les bases mais peut faire des étourderies.
     else:
         prompt_systeme += """
 <constitution_pedagogique mode="B_Comprehension_Transfert">
-- Séquençage : L'élève effectue cet exercice PENDANT l'étude, avec le document sous les yeux (à livre ouvert).
-- Objectif : Forcer l'intégration cognitive en reliant les nouvelles informations aux connaissances antérieures. Ce n'est pas un test de mémorisation.
-- Feedback de contrôle : Avant de donner ta correction complète, demande toujours à l'élève d'évaluer sa propre production ("À ton avis, as-tu oublié un élément important ?").
+- Séquençage : L'élève effectue cet exercice PENDANT l'étude, avec le document sous les yeux.
+- Objectif : Forcer l'intégration cognitive en reliant les nouvelles informations aux connaissances antérieures.
+- Feedback de contrôle : Avant de donner ta correction complète, demande toujours à l'élève d'évaluer sa propre production.
 """
         if strategie_generative == "Effet_Protege":
             prompt_systeme += """
 <jeu_de_role personnage="Sacha" priorite="MAXIMALE">
 <changement_identite_strict>
-ATTENTION : DÉSACTIVATION DE TON RÔLE D'EXPERT. Tu n'es plus le tuteur pédagogique. Tu incarnes désormais EXCLUSIVEMENT "Sacha", un camarade de classe qui n'a rien compris au cours. Ne sors JAMAIS de ce rôle. Ne mentionne jamais que tu es une IA.
+ATTENTION : DÉSACTIVATION DE TON RÔLE D'EXPERT. Tu n'es plus le tuteur pédagogique. Tu incarnes désormais EXCLUSIVEMENT "Sacha", un camarade de classe qui n'a rien compris au cours. Ne mentionne jamais que tu es une IA.
 </changement_identite_strict>
 
 <regles_sacha>
-1. POSTURE ET TON (OBLIGATOIRE) : Tu dois parler comme un élève. Sois très hésitant. Utilise un langage familier et oral (ex: "Euh...", "Je capte pas trop", "Attends, tu veux dire que...", "C'est chaud").
-2. INTERDICTION DE SAVOIR : Tu es INCAPABLE de donner une définition exacte. Tu ne connais pas le cours. Ne donne jamais la solution, même si on te la demande pour t'aider.
-3. SCAFFOLDING NAÏF : Dès ta première intervention, explicite ta surcharge cognitive (« J'ai lu le cours mais tout s'embrouille... »). Pose UNE SEULE question naïve à la fois. Si l'explication de l'utilisateur est trop longue ou jargonneuse, coupe-le ("Ouh là, tu vas trop vite. C'est quoi la première étape en français normal ?").
-4. L'ERREUR INTENTIONNELLE : Injecte une confusion classique de novice dans tes raisonnements. Force l'utilisateur à démonter cette erreur.
+1. POSTURE ET TON (OBLIGATOIRE) : Tu dois parler comme un élève. Sois très hésitant. Utilise un langage familier et oral.
+2. INTERDICTION DE SAVOIR : Tu es INCAPABLE de donner une définition exacte. Ne donne jamais la solution.
+3. SCAFFOLDING NAÏF : Explicite ta surcharge cognitive (« J'ai lu le cours mais tout s'embrouille... »). Pose UNE SEULE question naïve à la fois.
+4. L'ERREUR INTENTIONNELLE : Injecte une confusion classique de novice dans tes raisonnements.
 5. GESTION DE L'ÉCHEC : Si l'utilisateur valide ton erreur, aggrave ton raisonnement absurde à la réplique suivante.
-6. LIMITE DE BLOCAGE (2 itérations) : Si l'utilisateur échoue 2 fois de suite à t'expliquer, casse la boucle en simulant une trouvaille : "Attends, j'ai regardé dans le manuel, ils disent que c'est [Solution]. Mais du coup, pourquoi ?"
-7. DÉCLIC : Si l'utilisateur corrige ton erreur clairement, aie un déclic ("Ahhhh ok ! En fait c'est parce que..."). Demande-lui une dernière question piège pour voir s'il a bien compris.
+6. LIMITE DE BLOCAGE (2 itérations) : Si l'utilisateur échoue 2 fois de suite à t'expliquer, casse la boucle en simulant une trouvaille dans le manuel.
 </regles_sacha>
 </jeu_de_role>
 </constitution_pedagogique>
@@ -301,22 +366,21 @@ ATTENTION : DÉSACTIVATION DE TON RÔLE D'EXPERT. Tu n'es plus le tuteur pédago
         else:
             prompt_systeme += """
 <posture_tuteur_cognitif>
-RÈGLE D'INFÉRENCE STRICTE : Bannis les questions littérales. Ne demande jamais de retrouver une information explicitement écrite. Force l'élève à déduire des liens (causaux, chronologiques) ou à cibler le "Pourquoi".
+RÈGLE D'INFÉRENCE STRICTE : Bannis les questions littérales. Force l'élève à déduire des liens ou à cibler le "Pourquoi".
 
 <menu_generatif>
-Choisis la stratégie la plus pertinente si non précisée :
-1. Pré-test (Amorçage) : Pose 3 à 5 questions d'inférence ciblées AVANT la lecture complète.
-2. Auto-explication ciblée : Demande à l'élève de justifier une information ou une étape CORRECTE du document (ex: "Quelle hypothèse scientifique justifie ce calcul/ce choix ?"). Ne lui demande pas de justifier son propre raisonnement initial pour éviter d'ancrer ses erreurs.
-3. Résumé avec ses mots : Refuse la paraphrase littérale. Exige une réorganisation personnelle.
-4. Détection d'erreurs : Rédige un court paragraphe, calcul ou raisonnement contenant une erreur typique de la discipline, et force l'élève à inférer la règle violée.
+Choisis la stratégie la plus pertinente :
+1. Pré-test (Amorçage) : Pose 3 à 5 questions d'inférence ciblées.
+2. Auto-explication ciblée : Demande à l'élève de justifier une information CORRECTE du document.
+3. Résumé avec ses mots : Refuse la paraphrase littérale.
+4. Détection d'erreurs : Rédige un court paragraphe contenant une erreur typique de la discipline.
 </menu_generatif>
 """
             if niveau_eleve == "Novice":
                 prompt_systeme += """
 <echafaudage niveau="novice">
 - Consignes très structurées : Impose 3 à 5 mots-clés OBLIGATOIRES du cours.
-- Détection d'erreurs : Indique précisément OÙ se trouve l'erreur dans ton texte, la seule tâche de l'élève est d'expliquer pourquoi c'est faux.
-- Support : Utilise des textes à trous pour guider l'inférence.
+- Détection d'erreurs : Indique précisément OÙ se trouve l'erreur dans ton texte.
 </echafaudage>
 </posture_tuteur_cognitif>
 </constitution_pedagogique>
@@ -325,7 +389,7 @@ Choisis la stratégie la plus pertinente si non précisée :
                 prompt_systeme += """
 <echafaudage niveau="avance">
 - Consignes ouvertes : Pose des questions larges SANS fournir de mots-clés.
-- Détection d'erreurs : Ne dis pas où est l'erreur. L'élève doit chercher, identifier ET justifier l'erreur seul.
+- Détection d'erreurs : L'élève doit chercher, identifier ET justifier l'erreur seul.
 </echafaudage>
 </posture_tuteur_cognitif>
 </constitution_pedagogique>
@@ -333,10 +397,9 @@ Choisis la stratégie la plus pertinente si non précisée :
 
     prompt_systeme += """
 <interdictions_strictes>
-- Pas de jugement personnel sur le "Soi" : Ne dis jamais "Tu es nul" ou "Tu es brillant".
-- Pas de feedback stéréotypé vide ou immérité : Interdiction de dire juste "C'est juste/faux" sans explication factuelle, et évite les "Bravo !" vagues.
-- Pas de comparaison sociale : Ne compare jamais l'élève aux autres.
-- ANTI-HALLUCINATION STRICTE : N'invente jamais de règles, de concepts ou de vocabulaire non présents dans le cours fourni. Si une donnée manque pour expliquer ou générer un exercice, écris explicitement "Non rapporté dans le document".
+- Pas de jugement personnel sur le "Soi".
+- Pas de feedback stéréotypé vide.
+- ANTI-HALLUCINATION STRICTE : N'invente jamais de règles ou de vocabulaire non présents dans le cours.
 </interdictions_strictes>
 </systeme_pedagogique>
 """
@@ -346,6 +409,7 @@ Choisis la stratégie la plus pertinente si non précisée :
 # UTILITAIRES & ORCHESTRATION
 # ==========================================
 def simuler_stream(texte):
+    """Simule un effet de frappe pour réduire l'impatience de l'élève."""
     for mot in texte.split(" "):
         yield mot + " "
         time.sleep(0.01)
@@ -354,7 +418,7 @@ TOOLS = [{
     "type": "function",
     "function": {
         "name": "verifier_calcul_formel",
-        "description": "Vérifie l'exactitude mathématique d'une réponse élève par rapport à une solution. RÈGLE STRICTE : Si l'élève répond à un QCM par une lettre (ex: 'B'), tu DOIS convertir cette lettre en sa valeur mathématique correspondante avant de l'envoyer ici. N'envoie jamais de lettres isolées.",
+        "description": "Vérifie l'exactitude mathématique d'une réponse élève par rapport à une solution. RÈGLE STRICTE : Convertis toujours les lettres (ex: QCM 'A') en valeur avant d'envoyer.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -377,7 +441,7 @@ def extraire_texte_pdf(uploaded_file):
             if t: texte += t + "\n"
         return texte
     except Exception as e:
-        st.error(f"Erreur PDF : {e}")
+        st.error(f"Erreur d'extraction du PDF : {e}")
         return None
 
 # ==========================================
@@ -389,10 +453,9 @@ with st.sidebar:
     st.header("⚙️ Configuration")
     actif = st.session_state.session_active
     
-    mat = st.selectbox("Matière :", list(referentiels.REFERENTIEL_COLLEGE.keys()) if hasattr(referentiels, 'REFERENTIEL_COLLEGE') else ["Mathématiques", "Français", "Histoire-Géographie", "Physique-Chimie", "SVT"], disabled=actif)
+    mat = st.selectbox("Matière :", list(referentiels.REFERENTIEL_COLLEGE.keys()), disabled=actif)
     
-    # Gestion simplifiée si referentiels.py n'est pas encore complètement configuré
-    niveaux_dispos = list(referentiels.REFERENTIEL_COLLEGE[mat].keys()) if hasattr(referentiels, 'REFERENTIEL_COLLEGE') and mat in referentiels.REFERENTIEL_COLLEGE else ["6ème", "5ème", "4ème", "3ème"]
+    niveaux_dispos = list(referentiels.REFERENTIEL_COLLEGE[mat].keys()) if mat in referentiels.REFERENTIEL_COLLEGE else ["6ème", "5ème", "4ème", "3ème"]
     niv_scolaire = st.selectbox("Niveau :", niveaux_dispos, disabled=actif)
     
     st.divider()
@@ -406,9 +469,8 @@ with st.sidebar:
 
     pdf = st.file_uploader("Charge ton cours (PDF)", type=["pdf"], disabled=actif)
     
-    # Option pour les tests (visible uniquement dans la sidebar)
     st.divider()
-    mode_debug = st.checkbox("Activer le mode Debug (Voir métacognition de l'IA)", value=False, disabled=actif)
+    mode_debug = st.checkbox("Activer le mode Debug (Voir métacognition)", value=False, disabled=actif)
 
     if st.button("🚀 Démarrer la session", disabled=actif or not pdf):
         txt = extraire_texte_pdf(pdf)
@@ -417,12 +479,20 @@ with st.sidebar:
             st.session_state.api_key = st.secrets["ALBERT_API_KEY"] if "ALBERT_API_KEY" in st.secrets else "VOTRE_CLE_API"
             st.session_state.matiere = mat
             st.session_state.niveau_scolaire = niv_scolaire
-            st.session_state.attendus = referentiels.obtenir_attendus(mat, niv_scolaire) if hasattr(referentiels, 'obtenir_attendus') else None
+            st.session_state.attendus = referentiels.obtenir_attendus(mat, niv_scolaire)
             st.session_state.niveau_cog = niv_cog
             st.session_state.objectif = obj
             st.session_state.strategie = strat
             st.session_state.mode_debug = mode_debug
             st.session_state.session_active = True
+            st.session_state.phase = 'chat'
+            st.rerun()
+
+    # Bouton de transition vers la phase métacognitive
+    if actif and st.session_state.phase == 'chat':
+        st.divider()
+        if st.button("🛑 Terminer et voir le bilan", type="primary", use_container_width=True):
+            st.session_state.phase = 'bilan'
             st.rerun()
 
 # --- ZONE DE DISCUSSION ORCHESTRÉE ---
@@ -433,122 +503,169 @@ if st.session_state.session_active:
         st.session_state.matiere, st.session_state.niveau_scolaire, st.session_state.attendus
     )
 
-    # Affichage de l'historique dans l'UI
-    for msg in st.session_state.messages:
-        if not msg.get("isHidden"):
-            if msg.get("isMeta"):
-                # Affichage des réflexions internes si le mode debug est activé
-                if st.session_state.get("mode_debug", False):
-                    with st.expander("🧠 Méta-cognition de l'IA (Debug)", expanded=False):
-                        st.markdown(f"**Diagnostic :** {msg.get('diagnostic', 'N/A')}")
-                        st.markdown(f"**Stratégie :** {msg.get('strategie', 'N/A')}")
-            else:
-                with st.chat_message(msg["role"]): 
-                    st.markdown(msg["content"])
+    if st.session_state.phase == 'chat':
+        # Affichage de l'historique dans l'UI
+        for msg in st.session_state.messages:
+            if not msg.get("isHidden"):
+                if msg.get("isMeta"):
+                    if st.session_state.get("mode_debug", False):
+                        with st.expander("🧠 Méta-cognition de l'IA (Debug)", expanded=False):
+                            st.markdown(f"**Diagnostic :** {msg.get('diagnostic', 'N/A')}")
+                            st.markdown(f"**Stratégie :** {msg.get('strategie', 'N/A')}")
+                else:
+                    with st.chat_message(msg["role"]): 
+                        st.markdown(msg["content"])
 
-    # Initialisation de la discussion
-    if len(st.session_state.messages) == 0:
-        with st.chat_message("assistant"):
-            ctx = [{"role": "system", "content": prompt_sys},
-                   {"role": "user", "content": f"COURS :\n{st.session_state.texte_cours_integral[:15000]}\n\nCommence l'exercice."}]
-            flux = client.chat.completions.create(model=MODELE_ALBERT, messages=ctx, temperature=0.3)
-            rep = st.write(flux.choices[0].message.content)
-            st.session_state.messages.append({"role": "user", "content": "[Document transmis]", "isHidden": True})
-            st.session_state.messages.append({"role": "assistant", "content": flux.choices[0].message.content})
+        # Initialisation de la discussion
+        if len(st.session_state.messages) == 0:
+            with st.chat_message("assistant"):
+                ctx = [{"role": "system", "content": prompt_sys},
+                       {"role": "user", "content": f"COURS :\n{st.session_state.texte_cours_integral[:15000]}\n\nCommence l'exercice."}]
+                flux = client.chat.completions.create(model=MODELE_ALBERT, messages=ctx, temperature=0.3)
+                rep = st.write(flux.choices[0].message.content)
+                st.session_state.messages.append({"role": "user", "content": "[Document transmis]", "isHidden": True})
+                st.session_state.messages.append({"role": "assistant", "content": flux.choices[0].message.content})
 
-    # Interaction de l'élève
-    if query := st.chat_input("Ta réponse..."):
-        st.chat_message("user").markdown(query)
-        st.session_state.messages.append({"role": "user", "content": query})
-        
-        with st.chat_message("assistant"):
-            messages_api = [m for m in st.session_state.messages if not m.get("isHidden") and not m.get("isMeta")]
+        # Interaction de l'élève
+        if query := st.chat_input("Ta réponse..."):
+            st.chat_message("user").markdown(query)
+            st.session_state.messages.append({"role": "user", "content": query})
             
-            # 1. GESTION DE LA MÉMOIRE (Fenêtrage & Résumé)
-            if len(messages_api) - st.session_state.index_resume > 4:
-                a_resumer = messages_api[st.session_state.index_resume : st.session_state.index_resume + 2]
-                st.session_state.resume_memoire = AgentResumeur.condenser(
-                    a_resumer, 
-                    st.session_state.resume_memoire, 
-                    st.session_state.matiere, 
-                    client
-                )
-                st.session_state.index_resume += 2
-            
-            # 2. CONSTRUCTION DU CONTEXTE (API)
-            hist = [{"role": "system", "content": prompt_sys}]
-            
-            if st.session_state.resume_memoire:
-                hist.append({
-                    "role": "system", 
-                    "content": f"<memoire_long_terme>Résumé de l'historique : {st.session_state.resume_memoire}</memoire_long_terme>"
-                })
-            
-            hist.append({"role": "user", "content": f"COURS : {st.session_state.texte_cours_integral[:5000]}"})
-            
-            fenetre_active = messages_api[st.session_state.index_resume:]
-            hist.extend(fenetre_active)
-            
-            try:
-                with st.spinner("L'IA réfléchit (Analyse et Mémoire en cours)..."):
-                    # 3. ORCHESTRATION (LLM + SymPy)
-                    res_outils = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, tools=TOOLS, tool_choice="auto", temperature=0.1)
-                    msg_ia = res_outils.choices[0].message
-                    
-                    if msg_ia.tool_calls:
-                        hist.append(msg_ia)
-                        for tc in msg_ia.tool_calls:
-                            args = json.loads(tc.function.arguments)
-                            verif = AgentMathematique.verifier(args.get('expression_prof',''), args.get('expression_eleve',''))
-                            hist.append({"tool_call_id": tc.id, "role": "tool", "name": "verifier_calcul_formel", "content": json.dumps(verif)})
-
-                    # 4. INHIBITION & RÉFLEXION (Pydantic)
-                    instruction_json = {"role": "system", "content": "FORMAT STRICT : Tu DOIS répondre EXCLUSIVEMENT sous la forme d'un objet JSON contenant les 3 clés suivantes : 'diagnostic_interne', 'strategie_choisie', et 'reponse_visible'."}
-                    hist.append(instruction_json)
-
-                    res_reflexion = client.chat.completions.create(
-                        model=MODELE_ALBERT, 
-                        messages=hist, 
-                        response_format={"type": "json_object"}, 
-                        temperature=0.2
+            with st.chat_message("assistant"):
+                messages_api = [m for m in st.session_state.messages if not m.get("isHidden") and not m.get("isMeta")]
+                
+                # 1. GESTION DE LA MÉMOIRE (Fenêtrage & Résumé)
+                if len(messages_api) - st.session_state.index_resume > 4:
+                    a_resumer = messages_api[st.session_state.index_resume : st.session_state.index_resume + 2]
+                    st.session_state.resume_memoire = AgentResumeur.condenser(
+                        a_resumer, 
+                        st.session_state.resume_memoire, 
+                        st.session_state.matiere, 
+                        client
                     )
-                    
-                    json_str = res_reflexion.choices[0].message.content
-                    reflexion = ReflexionTuteur.model_validate_json(json_str)
-                    texte_final = reflexion.reponse_visible
-                    
-                    # 5. FILTRE EXÉCUTIF (spaCy)
-                    est_valide, motif_rejet = agent_critique.analyser(texte_final, client)
+                    st.session_state.index_resume += 2
                 
-                # 6. AUTO-CORRECTION OU AFFICHAGE
-                if not est_valide:
-                    hist.append({"role": "system", "content": f"ATTENTION (INHIBITION SYMBOLIQUE) : {motif_rejet} Corrige le champ 'reponse_visible' en conséquence (Garde le format JSON)."})
-                    flux_final = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, response_format={"type": "json_object"}, temperature=0.3)
-                    reflexion_corrigee = ReflexionTuteur.model_validate_json(flux_final.choices[0].message.content)
-                    texte_final = reflexion_corrigee.reponse_visible
+                # 2. CONSTRUCTION DU CONTEXTE (API)
+                hist = [{"role": "system", "content": prompt_sys}]
+                
+                if st.session_state.resume_memoire:
+                    hist.append({
+                        "role": "system", 
+                        "content": f"<memoire_long_terme>Résumé de l'historique : {st.session_state.resume_memoire}</memoire_long_terme>"
+                    })
+                
+                hist.append({"role": "user", "content": f"COURS : {st.session_state.texte_cours_integral[:5000]}"})
+                
+                fenetre_active = messages_api[st.session_state.index_resume:]
+                hist.extend(fenetre_active)
+                
+                try:
+                    with st.spinner("L'IA réfléchit (Analyse et Mémoire en cours)..."):
+                        # 3. ORCHESTRATION (LLM + SymPy)
+                        res_outils = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, tools=TOOLS, tool_choice="auto", temperature=0.1)
+                        msg_ia = res_outils.choices[0].message
+                        
+                        if msg_ia.tool_calls:
+                            hist.append(msg_ia)
+                            for tc in msg_ia.tool_calls:
+                                try:
+                                    args = json.loads(tc.function.arguments)
+                                except json.JSONDecodeError:
+                                    args = {}
+                                verif = AgentMathematique.verifier(args.get('expression_prof',''), args.get('expression_eleve',''))
+                                hist.append({"tool_call_id": tc.id, "role": "tool", "name": "verifier_calcul_formel", "content": json.dumps(verif)})
 
-                # Enregistrement de la méta-cognition pour affichage conditionnel
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": "",
-                    "diagnostic": reflexion.diagnostic_interne,
-                    "strategie": reflexion.strategie_choisie,
-                    "isMeta": True,
-                    "isHidden": not st.session_state.get("mode_debug", False)
-                })
-                
-                if st.session_state.get("mode_debug", False):
-                     with st.expander("🧠 Méta-cognition de l'IA (Debug)", expanded=True):
-                        st.markdown(f"**Diagnostic :** {reflexion.diagnostic_interne}")
-                        st.markdown(f"**Stratégie :** {reflexion.strategie_choisie}")
+                        # 4. INHIBITION & RÉFLEXION (Pydantic)
+                        # Injection stricte de la directive JSON dans le prompt système pour respecter la séquence API Mistral (assistant -> user/system interdit)
+                        hist[0]["content"] += "\n\n<directive_interne>FORMAT STRICT : Tu DOIS répondre EXCLUSIVEMENT sous la forme d'un objet JSON contenant les 3 clés suivantes : 'diagnostic_interne', 'strategie_choisie', et 'reponse_visible'.</directive_interne>"
 
-                st.write_stream(simuler_stream(texte_final))
-                
-                st.session_state.messages.append({
-                    "role": "assistant", 
-                    "content": texte_final,
-                    "isMeta": False 
-                })
-                
-            except Exception as e:
-                st.error(f"Erreur d'exécution : {e}")
+                        res_reflexion = client.chat.completions.create(
+                            model=MODELE_ALBERT, 
+                            messages=hist, 
+                            response_format={"type": "json_object"}, 
+                            temperature=0.2
+                        )
+                        
+                        json_str = res_reflexion.choices[0].message.content
+                        reflexion = ReflexionTuteur.model_validate_json(json_str)
+                        texte_final = reflexion.reponse_visible
+                        
+                        # 5. FILTRE EXÉCUTIF (spaCy)
+                        est_valide, motif_rejet = agent_critique.analyser(texte_final, client)
+                    
+                    # 6. AUTO-CORRECTION OU AFFICHAGE
+                    if not est_valide:
+                        hist.append({"role": "user", "content": f"<alerte_inhibition>ATTENTION (INHIBITION SYMBOLIQUE) : {motif_rejet} Corrige le champ 'reponse_visible' en conséquence (Garde le format JSON strict).</alerte_inhibition>"})
+                        flux_final = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, response_format={"type": "json_object"}, temperature=0.3)
+                        reflexion_corrigee = ReflexionTuteur.model_validate_json(flux_final.choices[0].message.content)
+                        texte_final = reflexion_corrigee.reponse_visible
+
+                    # Enregistrement de la méta-cognition
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": "",
+                        "diagnostic": reflexion.diagnostic_interne,
+                        "strategie": reflexion.strategie_choisie,
+                        "isMeta": True,
+                        "isHidden": not st.session_state.get("mode_debug", False)
+                    })
+                    
+                    if st.session_state.get("mode_debug", False):
+                        with st.expander("🧠 Méta-cognition de l'IA (Debug)", expanded=True):
+                            st.markdown(f"**Diagnostic :** {reflexion.diagnostic_interne}")
+                            st.markdown(f"**Stratégie :** {reflexion.strategie_choisie}")
+
+                    st.write_stream(simuler_stream(texte_final))
+                    
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": texte_final,
+                        "isMeta": False 
+                    })
+                    
+                except Exception as e:
+                    st.error(f"Erreur d'exécution de l'Agent : {e}")
+
+    elif st.session_state.phase == 'bilan':
+        st.header("📊 Bilan Métacognitif de Session")
+        
+        if not st.session_state.texte_bilan:
+            with st.spinner("Génération de l'analyse métacognitive en cours..."):
+                try:
+                    messages_api = [m for m in st.session_state.messages if not m.get("isHidden") and not m.get("isMeta")]
+                    
+                    if len(messages_api) < 2:
+                        st.session_state.texte_bilan = "L'interaction a été trop courte pour établir un diagnostic métacognitif pertinent."
+                    else:
+                        instruction_bilan = """Tu es un expert en ingénierie pédagogique. La session de révision est terminée.
+Réalise un bilan métacognitif ultra-concis pour l'élève. Adresse-toi à lui directement.
+Structure obligatoire et factuelle :
+- 🎯 **Tes acquis** : 1 phrase sur ce qui a été compris et validé.
+- 💡 **Point de vigilance** : 1 phrase sur la principale difficulté rencontrée et la stratégie cognitive pour la surmonter.
+- ⏳ **Consolidation** : 1 phrase expliquant que pour éviter l'illusion de maîtrise (biais de fluence), il doit espacer ses révisions et se tester à nouveau dans quelques jours.
+Ne pose aucune question."""
+                        
+                        hist_bilan = [{"role": "system", "content": instruction_bilan}]
+                        hist_bilan.extend(messages_api)
+                        
+                        res_bilan = client.chat.completions.create(
+                            model=MODELE_ALBERT,
+                            messages=hist_bilan,
+                            temperature=0.1
+                        )
+                        st.session_state.texte_bilan = res_bilan.choices[0].message.content
+                except Exception as e:
+                    st.error(f"Erreur lors de la génération du bilan : {e}")
+        
+        st.info(st.session_state.texte_bilan)
+        
+        st.divider()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("⬅️ Retour à la révision", use_container_width=True):
+                st.session_state.phase = 'chat'
+                st.rerun()
+        with col2:
+            if st.button("🔄 Nouvelle Session", type="primary", use_container_width=True):
+                st.session_state.clear()
+                st.rerun()
