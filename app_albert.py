@@ -10,47 +10,7 @@ import sys
 import subprocess
 from pydantic import BaseModel, Field
 
-# Mock pour permettre le fonctionnement sans le fichier complet referentiels.py
-class MockReferentiels:
-    REFERENTIEL_COLLEGE = {
-        "Mathématiques": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
-        "Français": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
-        "Histoire-Géographie & EMC": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
-        "SVT": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
-        "Physique-Chimie": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
-        "Technologie": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
-        "Anglais (LVA)": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
-        "Arts Plastiques": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
-        "Éducation Musicale": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}},
-        "EPS": {"6ème": {}, "5ème": {}, "4ème": {}, "3ème": {}}
-    }
-    
-    @staticmethod
-    def obtenir_attendus(matiere, niveau):
-        if matiere == "Mathématiques":
-            return {
-                "notions_cles": ["Priorités opératoires", "Fractions", "Équations", "Théorème de Thalès/Pythagore"],
-                "vocabulaire_exigible": ["addition", "multiplication", "inconnue", "simplifier", "dénominateur", "hypoténuse"],
-                "limites_zpd": ["Ne pas aborder les nombres complexes", "Ne pas utiliser de calcul matriciel"]
-            }
-        elif matiere == "Français":
-            return {
-                "notions_cles": ["Figures de style", "Narrateur", "Temps du récit", "Argumentation"],
-                "vocabulaire_exigible": ["métaphore", "imparfait", "focalisation", "champ lexical", "connecteur logique"],
-                "limites_zpd": ["Ne pas exiger l'analyse de subordonnées conjonctives complexes"]
-            }
-        return {
-            "notions_cles": ["Notions fondamentales de la discipline"],
-            "vocabulaire_exigible": ["Vocabulaire de base du cycle"],
-            "limites_zpd": ["Rester strictement dans le cadre des attendus de fin d'année d'Éduscol"]
-        }
-
-try:
-    import referentiels
-    if not hasattr(referentiels, 'REFERENTIEL_COLLEGE'):
-        referentiels = MockReferentiels
-except ImportError:
-    referentiels = MockReferentiels
+import referentiels
 
 # ==========================================
 # CONFIGURATION DE LA PAGE & CSS
@@ -226,7 +186,7 @@ Objectif : Réduire la distance entre la compréhension actuelle de l'élève et
 <transparence_cognitive_obligatoire>
 Garde tes balises structurelles invisibles pour l'élève. En revanche, sois explicite sur la méthode utilisée avec des mots simples. 
 - En Mode Mémorisation : Précise que tu utilises "la récupération en mémoire" (chercher la réponse dans sa tête) pour que le cerveau s'en souvienne plus longtemps.
-- En Mode Compréhension : Nomme le type d'exercice ("trouver l'erreur", "deviner grâce aux indices") et précise que c'est pour vérifier que son cerveau a bien créé les liens entre les idées.
+- En Mode Compréhension : Nomme le type d'exercice ("trouver l'erreur", "deviner grâce aux indices", etc ...) et précise que c'est pour vérifier que son cerveau a bien créé les liens entre les idées.
 </transparence_cognitive_obligatoire>
 
 <structures_intervention_obligatoires>
@@ -249,14 +209,13 @@ Pour rédiger ta réponse, tu dois formuler un paragraphe unique qui intègre im
 
 <exemples_few_shot>
 <exemple_feedback_processus>
-"Ton résultat est inexact car tu as fait l'addition avant la multiplication, oubliant l'ordre de priorité des calculs. Pour aider ton cerveau à bien s'organiser, nous allons utiliser les priorités opératoires : quelle opération le cours demande-t-il de faire en premier ici ?"
+"Ton résultat est inexact car tu as fait l'addition avant la multiplication, oubliant l'ordre de priorité des calculs. Pour t'aider à corriger ton erreur, nous allons utiliser les priorités opératoires : quelle opération le cours demande-t-il de faire en premier ici ?"
 </exemple_feedback_processus>
 
 <exemple_feedback_autoregulation>
 "Je remarque que tu as répondu très vite à cette question. Pour bien surveiller ton travail et éviter les pièges, activons ton radar : à quel moment as-tu vérifié si ta réponse correspondait bien à la chronologie du texte ? Quel indice du document pourrait te confirmer ton choix ?"
 </exemple_feedback_autoregulation>
 </exemples_few_shot>
-"""
 
 <delegation_neuro_symbolique>
 - Tu as accès à un outil nommé `verifier_calcul_formel`. Appelle-le dès qu'il y a un calcul ou une valeur numérique. Fie-toi uniquement à lui.
@@ -339,7 +298,7 @@ ATTENTION : DÉSACTIVATION DE TON RÔLE D'EXPERT. Tu n'es plus le tuteur pédago
 RÈGLE D'INFÉRENCE STRICTE : Bannis les questions littérales. Force l'élève à déduire des liens ou à cibler le "Pourquoi".
 
 <menu_generatif>
-Choisis la stratégie la plus pertinente :
+Choisis la strategy la plus pertinente :
 1. Pré-test (Amorçage) : Pose 3 à 5 questions d'inférence ciblées.
 2. Auto-explication ciblée : Demande à l'élève de justifier une information CORRECTE du document.
 3. Résumé avec ses mots : Refuse la paraphrase littérale.
@@ -548,6 +507,7 @@ if st.session_state.session_active:
                                 hist.append({"tool_call_id": tc.id, "role": "tool", "name": "verifier_calcul_formel", "content": json.dumps(verif)})
 
                         # 4. INHIBITION & RÉFLEXION (Pydantic)
+                        # Injection stricte de la directive JSON dans le prompt système pour respecter la séquence API Mistral (assistant -> user/system interdit)
                         hist[0]["content"] += "\n\n<directive_interne>FORMAT STRICT : Tu DOIS répondre EXCLUSIVEMENT sous la forme d'un objet JSON contenant les 3 clés suivantes : 'diagnostic_interne', 'strategie_choisie', et 'reponse_visible'.</directive_interne>"
 
                         res_reflexion = client.chat.completions.create(
