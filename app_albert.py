@@ -13,34 +13,6 @@ from pydantic import BaseModel, Field
 import referentiels
 
 # ==========================================
-# --- TUTORIEL D'ACCUEIL ---
-# ==========================================
-@st.dialog("👋 Bienvenue dans cette application de révision")
-def afficher_tutoriel():
-    st.markdown("""
-        <style>
-        .big-font { font-size: 1.25rem !important; line-height: 1.7 !important; color: #2D3748; }
-        .step-title { font-weight: bold; color: #5B9BD5; font-size: 1.35rem; display: block; margin-top: 15px; }
-        .mode-box { background-color: #F0F4F8; padding: 15px; border-radius: 12px; margin: 15px 0; border-left: 6px solid #5B9BD5; }
-        </style>
-        <div class="big-font">
-        Cette application utilise les principes issus des <b>sciences cognitives</b> pour t'aider à réviser efficacement.<br>
-        <div class="mode-box">
-        <b>💡 Quel mode choisir ?</b><br><br>
-        • <b>Mémorisation :</b> Pour retenir les définitions et les concepts "par cœur".<br><br>
-        • <b>Compréhension :</b> Pour maîtriser ton cours en profondeur en l'expliquant avec tes propres mots.
-        </div>
-        <b>Comment l'utiliser en 3 étapes :</b><br>
-        <span class="step-title">1. ⚙️ Règle l'application</span> Choisis ton mode et ton niveau.<br>
-        <span class="step-title">2. 🧭 Donne-lui ton cours</span> Charge ton PDF ou colle ton texte.<br>
-        <span class="step-title">3. 💬 Discute</span> Réponds aux questions dans le chat, et demande ton bilan à la fin !
-        </div><br>
-    """, unsafe_allow_html=True)
-    if st.button("🚀 J'ai compris, c'est parti !", use_container_width=True):
-        st.session_state.tutoriel_vu = True
-        st.rerun()
-
-# ==========================================
 # CONFIGURATION DE LA PAGE & CSS
 # ==========================================
 st.set_page_config(page_title="Sacha - Tuteur Cognitif", page_icon="🦉", layout="centered")
@@ -82,6 +54,38 @@ if "index_resume" not in st.session_state: st.session_state.index_resume = 0
 # Variables pour la gestion des vues et du bilan métacognitif
 if "phase" not in st.session_state: st.session_state.phase = 'chat'
 if "texte_bilan" not in st.session_state: st.session_state.texte_bilan = ""
+
+# ==========================================
+# --- TUTORIEL D'ACCUEIL (MODAL) ---
+# ==========================================
+@st.dialog("👋 Bienvenue dans Sacha")
+def afficher_tutoriel():
+    st.markdown("""
+        <style>
+        .big-font { font-size: 1.15rem !important; line-height: 1.6 !important; color: #2D3748; }
+        .step-title { font-weight: bold; color: #1E40AF; font-size: 1.25rem; display: block; margin-top: 15px; }
+        .mode-box { background-color: #F0F4F8; padding: 15px; border-radius: 12px; margin: 15px 0; border-left: 6px solid #1E40AF; }
+        </style>
+        <div class="big-font">
+        Cette application utilise les principes issus des <b>sciences cognitives</b> pour t'aider à réviser efficacement.<br>
+        <div class="mode-box">
+        <b>💡 Quel mode choisir ?</b><br><br>
+        • <b>Mémorisation :</b> Pour retenir les définitions et les concepts "par cœur" (récupération en mémoire).<br><br>
+        • <b>Compréhension :</b> Pour maîtriser ton cours en profondeur en l'expliquant avec tes propres mots (apprentissage génératif).
+        </div>
+        <b>Comment l'utiliser en 3 étapes :</b><br>
+        <span class="step-title">1. ⚙️ Règle l'application</span> Choisis ton mode et ton niveau.<br>
+        <span class="step-title">2. 🧭 Donne-lui ton cours</span> Charge ton PDF ou colle ton texte.<br>
+        <span class="step-title">3. 💬 Discute</span> Réponds aux questions dans le chat, et demande ton bilan à la fin !
+        </div><br>
+    """, unsafe_allow_html=True)
+    if st.button("🚀 J'ai compris, c'est parti !", use_container_width=True):
+        st.session_state.tutoriel_vu = True
+        st.rerun()
+
+# Déclenchement automatique du tutoriel
+if not st.session_state.tutoriel_vu:
+    afficher_tutoriel()
 
 # ==========================================
 # SCHÉMAS PYDANTIC (MÉTACOGNITION IA)
