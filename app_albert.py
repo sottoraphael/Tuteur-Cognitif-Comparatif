@@ -8,6 +8,7 @@ import time
 import spacy
 import sys
 import subprocess
+import re
 from pydantic import BaseModel, Field
 
 import referentiels
@@ -47,9 +48,10 @@ if "niveau_scolaire" not in st.session_state: st.session_state.niveau_scolaire =
 if "attendus" not in st.session_state: st.session_state.attendus = None
 if "api_key" not in st.session_state: st.session_state.api_key = ""
 
-# Variables pour la Mémoire de Travail
+# Variables pour la Mémoire de Travail et le Juge Déterministe
 if "resume_memoire" not in st.session_state: st.session_state.resume_memoire = ""
 if "index_resume" not in st.session_state: st.session_state.index_resume = 0
+if "lettre_attendue" not in st.session_state: st.session_state.lettre_attendue = "NA"
 
 # Variables pour la gestion des vues et du bilan métacognitif
 if "phase" not in st.session_state: st.session_state.phase = 'chat'
@@ -93,6 +95,7 @@ if not st.session_state.tutoriel_vu:
 class ReflexionTuteur(BaseModel):
     """Schéma imposant la réflexion avant l'action (Inhibition). Optimisé pour regrouper le diagnostic et la vérification."""
     diagnostic_interne: str = Field(description="Analyse factuelle de la réponse de l'élève et vérification stricte de la faisabilité physique/logique des analogies employées.")
+    lettre_attendue_qcm: str = Field(description="Si ta reponse_visible contient une nouvelle question QCM, indique ici UNIQUEMENT la lettre de la bonne réponse (A, B, C ou D). Sinon, écris 'NA'.")
     strategie_choisie: str = Field(description="Catégorisation stricte de l'intervention (ex: Feedback de Processus, Remédiation, etc.).")
     reponse_visible: str = Field(description="Le texte final adressé à l'élève, respectant le format LaTeX et la Transparence Cognitive.")
 
@@ -442,6 +445,7 @@ with st.sidebar:
             st.session_state.mode_debug = mode_debug
             st.session_state.session_active = True
             st.session_state.phase = 'chat'
+            st.session_state.lettre_attendue = "NA"
             st.rerun()
 
     # Bouton de transition vers la phase métacognitive
@@ -468,6 +472,7 @@ if st.session_state.session_active:
                         with st.expander("🧠 Méta-cognition de l'IA (Debug)", expanded=False):
                             st.markdown(f"**Diagnostic :** {msg.get('diagnostic', 'N/A')}")
                             st.markdown(f"**Stratégie :** {msg.get('strategie', 'N/A')}")
+                            st.markdown(f"**Lettre QCM Attendue :** {msg.get('lettre_attendue', 'N/A')}")
                 else:
                     with st.chat_message(msg["role"]): 
                         st.markdown(msg["content"])
@@ -517,10 +522,34 @@ if st.session_state.session_active:
                 fenetre_active = messages_api[st.session_state.index_resume:]
                 hist.extend(fenetre_active)
                 
+                # =====================================================================
+                # JUGE DÉTERMINISTE (REGEX) - Interception avant génération
+                # =====================================================================
+                attendu = st.session_state.get("lettre_attendue", "NA")
+                if attendu in ["A", "B", "C", "D"]:
+                    lettres_trouvees = re.findall(r'\b[A-Da-d]\b', query)
+                    if len(lettres_trouvees) == 1:
+                        lettre_eleve = lettres_trouvees[0].upper()
+                        if lettre_eleve == attendu:
+                            hist.append({"role": "system", "content": f"<juge_deterministe>INTERVENTION SYMBOLIQUE : L'élève a choisi la lettre {lettre_eleve}. C'est EXACTEMENT la bonne réponse. Valide-la formellement.</juge_deterministe>"})
+                        else:
+                            hist.append({"role": "system", "content": f"<juge_deterministe>INTERVENTION SYMBOLIQUE : L'élève a choisi la lettre {lettre_eleve}. C'est FAUX (la bonne était {attendu}). NE LE FÉLICITE SURTOUT PAS. Corrige-le en appliquant un Feedback de Processus strict.</juge_deterministe>"})
+                # =====================================================================
+
                 try:
                     with st.spinner("L'IA réfléchit (Analyse et Mémoire en cours)..."):
-                        # 3. ORCHESTRATION (LLM + SymPy)
-                        res_outils = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, tools=TOOLS, tool_choice="auto", temperature=0.1)
+                        # 3. ORCHESTRATION (LLM + SymPy) ROUTAGE CONDITIONNEL
+                        matieres_scientifiques = ["Mathématiques", "Physique-Chimie", "SVT", "Technologie"]
+                        api_args = {
+                            "model": MODELE_ALBERT,
+                            "messages": hist,
+                            "temperature": 0.1
+                        }
+                        if st.session_state.matiere in matieres_scientifiques:
+                            api_args["tools"] = TOOLS
+                            api_args["tool_choice"] = "auto"
+
+                        res_outils = client.chat.completions.create(**api_args)
                         msg_ia = res_outils.choices[0].message
                         
                         if msg_ia.tool_calls:
@@ -535,7 +564,7 @@ if st.session_state.session_active:
 
                         # 4. INHIBITION & RÉFLEXION (Pydantic)
                         # Injection stricte de la directive JSON dans le prompt système pour respecter la séquence API Mistral (assistant -> user/system interdit)
-                        hist[0]["content"] += "\n\n<directive_interne>FORMAT STRICT : Tu DOIS répondre EXCLUSIVEMENT sous la forme d'un objet JSON contenant les 3 clés suivantes : 'diagnostic_interne', 'strategie_choisie', et 'reponse_visible'.</directive_interne>"
+                        hist[0]["content"] += "\n\n<directive_interne>FORMAT STRICT : Tu DOIS répondre EXCLUSIVEMENT sous la forme d'un objet JSON contenant les 4 clés suivantes : 'diagnostic_interne', 'lettre_attendue_qcm', 'strategie_choisie', et 'reponse_visible'.</directive_interne>"
 
                         res_reflexion = client.chat.completions.create(
                             model=MODELE_ALBERT, 
@@ -558,12 +587,16 @@ if st.session_state.session_active:
                         reflexion_corrigee = ReflexionTuteur.model_validate_json(flux_final.choices[0].message.content)
                         texte_final = reflexion_corrigee.reponse_visible
 
+                    # Sauvegarde de la lettre attendue en mémoire pour le prochain tour
+                    st.session_state.lettre_attendue = reflexion.lettre_attendue_qcm
+
                     # Enregistrement de la méta-cognition
                     st.session_state.messages.append({
                         "role": "assistant",
                         "content": "",
                         "diagnostic": reflexion.diagnostic_interne,
                         "strategie": reflexion.strategie_choisie,
+                        "lettre_attendue": reflexion.lettre_attendue_qcm,
                         "isMeta": True,
                         "isHidden": not st.session_state.get("mode_debug", False)
                     })
@@ -628,4 +661,5 @@ Ne pose aucune question."""
         with col2:
             if st.button("🔄 Nouvelle Session", type="primary", use_container_width=True):
                 st.session_state.clear()
+                st.session_state.lettre_attendue = "NA"
                 st.rerun()
