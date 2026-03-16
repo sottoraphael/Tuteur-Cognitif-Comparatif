@@ -100,7 +100,7 @@ class ReflexionTuteur(BaseModel):
     """Schéma imposant la réflexion avant l'action (Inhibition). Optimisé pour regrouper le diagnostic et la vérification."""
     diagnostic_interne: str = Field(description="Analyse factuelle de la réponse de l'élève et vérification stricte de la faisabilité physique/logique des analogies employées.")
     lettre_attendue_qcm: str = Field(description="Si ta reponse_visible contient une nouvelle question QCM, indique ici UNIQUEMENT la lettre de la bonne réponse (A, B, C ou D). Sinon, écris 'NA'.")
-    notion_acquise: bool = Field(description="Mets True UNIQUEMENT si l'élève a donné une réponse correcte et définitive ou s'il a terminé la remédiation, signifiant qu'il peut passer à la notion suivante du texte. Sinon False.")
+    passage_bloc_suivant: bool = Field(description="Valeur booléenne (true ou false). Mets true UNIQUEMENT si l'élève a donné une réponse correcte et définitive ou s'il a terminé la remédiation, signifiant qu'il peut passer à la suite du texte. Sinon false.")
     strategie_choisie: str = Field(description="Catégorisation stricte de l'intervention (ex: Feedback de Processus, Remédiation, etc.).")
     reponse_visible: str = Field(description="Le texte final adressé à l'élève, respectant le format LaTeX et la Transparence Cognitive.")
 
@@ -493,7 +493,7 @@ if st.session_state.session_active:
                             st.markdown(f"**Diagnostic :** {msg.get('diagnostic', 'N/A')}")
                             st.markdown(f"**Stratégie :** {msg.get('strategie', 'N/A')}")
                             st.markdown(f"**Lettre QCM Attendue :** {msg.get('lettre_attendue', 'N/A')}")
-                            st.markdown(f"**Passage au bloc suivant :** {msg.get('notion_acquise', False)}")
+                            st.markdown(f"**Passage au bloc suivant :** {msg.get('passage_bloc_suivant', False)}")
                 else:
                     with st.chat_message(msg["role"]): 
                         st.markdown(msg["content"])
@@ -590,7 +590,7 @@ if st.session_state.session_active:
                                 hist.append({"tool_call_id": tc.id, "role": "tool", "name": "verifier_calcul_formel", "content": json.dumps(verif)})
 
                         # 4. INHIBITION & RÉFLEXION (Pydantic)
-                        hist[0]["content"] += "\n\n<directive_interne>FORMAT STRICT : Tu DOIS répondre EXCLUSIVEMENT sous la forme d'un objet JSON contenant les 5 clés suivantes : 'diagnostic_interne', 'lettre_attendue_qcm', 'notion_acquise', 'strategie_choisie', et 'reponse_visible'.</directive_interne>"
+                        hist[0]["content"] += "\n\n<directive_interne>FORMAT STRICT : Tu DOIS répondre EXCLUSIVEMENT sous la forme d'un objet JSON contenant les 5 clés suivantes : 'diagnostic_interne', 'lettre_attendue_qcm', 'passage_bloc_suivant' (booléen true ou false), 'strategie_choisie', et 'reponse_visible'.</directive_interne>"
 
                         res_reflexion = client.chat.completions.create(
                             model=MODELE_ALBERT, 
@@ -613,12 +613,12 @@ if st.session_state.session_active:
                         reflexion_corrigee = ReflexionTuteur.model_validate_json(flux_final.choices[0].message.content)
                         texte_final = reflexion_corrigee.reponse_visible
                         # Récupération sécurisée du booléen post-correction
-                        reflexion.notion_acquise = reflexion_corrigee.notion_acquise
+                        reflexion.passage_bloc_suivant = reflexion_corrigee.passage_bloc_suivant
 
                     # =========================================================
                     # AVANCEMENT DANS LE COURS (RAG SÉQUENTIEL)
                     # =========================================================
-                    if reflexion.notion_acquise:
+                    if reflexion.passage_bloc_suivant:
                         if st.session_state.index_chunk < len(st.session_state.chunks) - 1:
                             st.session_state.index_chunk += 1
                         else:
@@ -635,7 +635,7 @@ if st.session_state.session_active:
                         "diagnostic": reflexion.diagnostic_interne,
                         "strategie": reflexion.strategie_choisie,
                         "lettre_attendue": reflexion.lettre_attendue_qcm,
-                        "notion_acquise": reflexion.notion_acquise,
+                        "passage_bloc_suivant": reflexion.passage_bloc_suivant,
                         "isMeta": True,
                         "isHidden": not st.session_state.get("mode_debug", False)
                     })
@@ -644,7 +644,7 @@ if st.session_state.session_active:
                         with st.expander("🧠 Méta-cognition de l'IA (Debug)", expanded=True):
                             st.markdown(f"**Diagnostic :** {reflexion.diagnostic_interne}")
                             st.markdown(f"**Stratégie :** {reflexion.strategie_choisie}")
-                            st.markdown(f"**Passage au bloc suivant :** {reflexion.notion_acquise}")
+                            st.markdown(f"**Passage au bloc suivant :** {reflexion.passage_bloc_suivant}")
 
                     st.write_stream(simuler_stream(texte_final))
                     
