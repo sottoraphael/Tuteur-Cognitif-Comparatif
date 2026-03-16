@@ -53,7 +53,7 @@ if "resume_memoire" not in st.session_state: st.session_state.resume_memoire = "
 if "index_resume" not in st.session_state: st.session_state.index_resume = 0
 if "lettre_attendue" not in st.session_state: st.session_state.lettre_attendue = "NA"
 
-# Variables pour le Chunking Séquentiel (Étape 1 de l'audit)
+# Variables pour le Chunking Séquentiel
 if "chunks" not in st.session_state: st.session_state.chunks = []
 if "index_chunk" not in st.session_state: st.session_state.index_chunk = 0
 
@@ -100,7 +100,7 @@ class ReflexionTuteur(BaseModel):
     """Schéma imposant la réflexion avant l'action (Inhibition). Optimisé pour regrouper le diagnostic et la vérification."""
     diagnostic_interne: str = Field(description="Analyse factuelle de la réponse de l'élève et vérification stricte de la faisabilité physique/logique des analogies employées.")
     lettre_attendue_qcm: str = Field(description="Si ta reponse_visible contient une nouvelle question QCM, indique ici UNIQUEMENT la lettre de la bonne réponse (A, B, C ou D). Sinon, écris 'NA'.")
-    passage_bloc_suivant: bool = Field(description="Valeur booléenne (true ou false). Mets true UNIQUEMENT si l'élève a donné une réponse correcte et définitive ou s'il a terminé la remédiation, signifiant qu'il peut passer à la suite du texte. Sinon false.")
+    passage_bloc_suivant: bool = Field(description="Valeur booléenne. Mets true UNIQUEMENT si TOUS les concepts majeurs de l'EXTRAIT actuel ont été testés et maîtrisés. Tant qu'il reste des notions importantes non abordées dans cet extrait, garde false pour continuer à poser des questions dessus.")
     strategie_choisie: str = Field(description="Catégorisation stricte de l'intervention (ex: Feedback de Processus, Remédiation, etc.).")
     reponse_visible: str = Field(description="Le texte final adressé à l'élève, respectant le format LaTeX et la Transparence Cognitive.")
 
@@ -129,15 +129,21 @@ class AgentMathematique:
         except Exception:
             return {"erreur": "Syntaxe non reconnue par le moteur. Demande à l'élève de clarifier sa formule."}
 
+# OPTIMISATION LATENCE : Mise en cache du modèle lourd
+@st.cache_resource
+def charger_modele_nlp():
+    try:
+        import spacy
+        return spacy.load("fr_core_news_sm")
+    except OSError:
+        subprocess.run([sys.executable, "-m", "spacy", "download", "fr_core_news_sm"], check=True)
+        import spacy
+        return spacy.load("fr_core_news_sm")
+
 class AgentCritique:
-    """Filtre exécutif basé sur NLP local (spaCy). Ultra-rapide et déconnecté du réseau."""
+    """Filtre exécutif basé sur NLP local (spaCy). Ultra-rapide et mis en cache."""
     def __init__(self):
-        try:
-            self.nlp = spacy.load("fr_core_news_sm")
-        except OSError:
-            # Optimisation : Utilisation de sys.executable pour garantir le téléchargement dans le bon venv
-            subprocess.run([sys.executable, "-m", "spacy", "download", "fr_core_news_sm"], check=True)
-            self.nlp = spacy.load("fr_core_news_sm")
+        self.nlp = charger_modele_nlp()
 
     def analyser(self, texte_reponse):
         doc = self.nlp(texte_reponse)
@@ -372,7 +378,8 @@ Choisis la stratégie la plus pertinente :
 # ==========================================
 # UTILITAIRES & ORCHESTRATION
 # ==========================================
-def decouper_texte(texte, taille_chunk=3000, chevauchement=500):
+# OPTIMISATION CHUNKING : Agrandissement des blocs pour éviter l'avancement prématuré
+def decouper_texte(texte, taille_chunk=10000, chevauchement=2000):
     """Découpe séquentiellement le cours pour prévenir la surcharge du contexte (RAG linéaire)."""
     chunks = []
     start = 0
@@ -522,7 +529,7 @@ if st.session_state.session_active:
                 messages_api = [m for m in st.session_state.messages if not m.get("isHidden") and not m.get("isMeta")]
                 
                 # 1. GESTION DE LA MÉMOIRE (Fenêtrage & Résumé)
-                if len(messages_api) - st.session_state.index_resume > 4:
+                if len(messages_api) - st.session_state.index_resume > 6:
                     a_resumer = messages_api[st.session_state.index_resume : st.session_state.index_resume + 2]
                     st.session_state.resume_memoire = AgentResumeur.condenser(
                         a_resumer, 
@@ -541,7 +548,7 @@ if st.session_state.session_active:
                         "content": f"<memoire_long_terme>Résumé de l'historique : {st.session_state.resume_memoire}</memoire_long_terme>"
                     })
                 
-                # Injection dynamique de la fraction courante au lieu des 40 000 caractères
+                # Injection dynamique de la fraction courante
                 total_chunks = len(st.session_state.chunks)
                 chunk_courant = st.session_state.chunks[st.session_state.index_chunk]
                 hist.append({"role": "user", "content": f"EXTRAIT DU COURS (Partie {st.session_state.index_chunk + 1}/{total_chunks}) :\n{chunk_courant}"})
