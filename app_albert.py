@@ -100,7 +100,7 @@ class ReflexionTuteur(BaseModel):
     """Schéma imposant la réflexion avant l'action (Inhibition). Optimisé pour regrouper le diagnostic et la vérification."""
     diagnostic_interne: str = Field(description="Analyse factuelle de la réponse de l'élève et vérification stricte de la faisabilité physique/logique des analogies employées.")
     lettre_attendue_qcm: str = Field(description="Si ta reponse_visible contient une nouvelle question QCM, indique ici UNIQUEMENT la lettre de la bonne réponse (A, B, C ou D). Sinon, écris 'NA'.")
-    concepts_restants: str = Field(description="Analyse l'extrait du cours. Liste brièvement les concepts majeurs de cet extrait qui n'ont pas encore fait l'objet d'une question. S'ils ont TOUS été testés et maîtrisés, écris 'Aucun'.")
+    concepts_restants: str = Field(description="Analyse l'extrait du cours. Écris une CHAÎNE DE CARACTÈRES UNIQUE (pas de tableau/liste JSON) résumant les concepts majeurs non encore abordés. S'ils ont TOUS été testés et maîtrisés, écris exactement le mot 'Aucun'.")
     passage_bloc_suivant: bool = Field(description="Valeur booléenne. Mets true UNIQUEMENT si 'concepts_restants' est 'Aucun' ET que la réponse de l'élève est juste. Sinon, garde false.")
     strategie_choisie: str = Field(description="Catégorisation stricte de l'intervention (ex: Feedback de Processus, Remédiation, etc.).")
     reponse_visible: str = Field(description="Le texte final adressé à l'élève, respectant le format LaTeX et la Transparence Cognitive.")
@@ -599,7 +599,7 @@ if st.session_state.session_active:
                                 hist.append({"tool_call_id": tc.id, "role": "tool", "name": "verifier_calcul_formel", "content": json.dumps(verif)})
 
                         # 4. INHIBITION & RÉFLEXION (Pydantic)
-                        hist[0]["content"] += "\n\n<directive_interne>FORMAT STRICT : Tu DOIS répondre EXCLUSIVEMENT sous la forme d'un objet JSON contenant les 6 clés suivantes : 'diagnostic_interne', 'lettre_attendue_qcm', 'concepts_restants', 'passage_bloc_suivant' (booléen true ou false), 'strategie_choisie', et 'reponse_visible'.</directive_interne>"
+                        hist[0]["content"] += "\n\n<directive_interne>FORMAT STRICT : Tu DOIS répondre EXCLUSIVEMENT sous la forme d'un objet JSON contenant les 6 clés suivantes : 'diagnostic_interne', 'lettre_attendue_qcm', 'concepts_restants' (format texte simple, pas de tableau), 'passage_bloc_suivant' (booléen true ou false), 'strategie_choisie', et 'reponse_visible'.</directive_interne>"
 
                         res_reflexion = client.chat.completions.create(
                             model=MODELE_ALBERT, 
