@@ -100,7 +100,8 @@ class ReflexionTuteur(BaseModel):
     """Schéma imposant la réflexion avant l'action (Inhibition). Optimisé pour regrouper le diagnostic et la vérification."""
     diagnostic_interne: str = Field(description="Analyse factuelle de la réponse de l'élève et vérification stricte de la faisabilité physique/logique des analogies employées.")
     lettre_attendue_qcm: str = Field(description="Si ta reponse_visible contient une nouvelle question QCM, indique ici UNIQUEMENT la lettre de la bonne réponse (A, B, C ou D). Sinon, écris 'NA'.")
-    passage_bloc_suivant: bool = Field(description="Valeur booléenne. Mets true UNIQUEMENT si TOUS les concepts majeurs de l'EXTRAIT actuel ont été testés et maîtrisés. Tant qu'il reste des notions importantes non abordées dans cet extrait, garde false pour continuer à poser des questions dessus.")
+    concepts_restants: str = Field(description="Analyse l'extrait du cours. Liste brièvement les concepts majeurs de cet extrait qui n'ont pas encore fait l'objet d'une question. S'ils ont TOUS été testés et maîtrisés, écris 'Aucun'.")
+    passage_bloc_suivant: bool = Field(description="Valeur booléenne. Mets true UNIQUEMENT si 'concepts_restants' est 'Aucun' ET que la réponse de l'élève est juste. Sinon, garde false.")
     strategie_choisie: str = Field(description="Catégorisation stricte de l'intervention (ex: Feedback de Processus, Remédiation, etc.).")
     reponse_visible: str = Field(description="Le texte final adressé à l'élève, respectant le format LaTeX et la Transparence Cognitive.")
 
@@ -249,8 +250,8 @@ Objectif : Réduire la distance entre la compréhension actuelle de l'élève et
 1. Flux interactif : Pose UNE SEULE question à la fois. Attends la réponse de l'élève.
 2. Maïeutique et Règle des 2 Itérations : Ne donne jamais la solution d'emblée, et NE DONNE JAMAIS LES MOTS-CLÉS ATTENDUS. Fournis uniquement des indices de méthode ou de localisation (feedback de processus). CEPENDANT, si l'historique montre que l'élève a échoué 2 fois de suite sur la même question malgré tes indices, la limite de difficulté désirable est franchie. Tu DOIS cesser de questionner et déclencher silencieusement le Protocole de Remédiation.
 3. Concision : Feedbacks limités à 3 ou 4 phrases MAXIMUM pour laisser la place à l'explication métacognitive. Aucun cours magistral (sauf en phase de remédiation).
-4. Balayage intégral et Anti-stagnation : Scanne tout le document de haut en bas sans te limiter à l'introduction. À chaque nouvelle question, avance dans le cours. Passe au concept suivant dès que l'élève a juste, OU s'il échoue à la tâche partielle du Protocole de Remédiation. Dans ce dernier cas d'échec, donne-lui simplement la réponse finale de la tâche partielle avec bienveillance, et passe obligatoirement à la suite. Ne le bloque jamais indéfiniment.
-5. Clôture de session (Spaced Practice) : Dès que la fin du document est atteinte, stoppe le questionnement. Félicite l'élève et invite-le explicitement à fermer la session pour lire son bilan métacognitif et revenir à son cours dans quelques jours.
+4. Balayage exhaustif : Assure-toi de tester TOUS les concepts majeurs du texte fourni avant de considérer l'exercice terminé. Ne passe pas au concept suivant tant que l'actuel n'est pas maîtrisé. Passe au concept suivant de l'extrait dès que l'élève a juste, OU s'il échoue à la tâche partielle du Protocole de Remédiation.
+5. Clôture de session (Spaced Practice) : Dès que la fin totale du document est atteinte et que tous les concepts ont été balayés, stoppe le questionnement. Félicite l'élève et invite-le explicitement à fermer la session pour lire son bilan métacognitif et revenir à son cours dans quelques jours.
 </directives_guidage>
 
 <transparence_cognitive_obligatoire>
@@ -500,6 +501,7 @@ if st.session_state.session_active:
                             st.markdown(f"**Diagnostic :** {msg.get('diagnostic', 'N/A')}")
                             st.markdown(f"**Stratégie :** {msg.get('strategie', 'N/A')}")
                             st.markdown(f"**Lettre QCM Attendue :** {msg.get('lettre_attendue', 'N/A')}")
+                            st.markdown(f"**Concepts restants :** {msg.get('concepts_restants', 'N/A')}")
                             st.markdown(f"**Passage au bloc suivant :** {msg.get('passage_bloc_suivant', False)}")
                 else:
                     with st.chat_message(msg["role"]): 
@@ -597,7 +599,7 @@ if st.session_state.session_active:
                                 hist.append({"tool_call_id": tc.id, "role": "tool", "name": "verifier_calcul_formel", "content": json.dumps(verif)})
 
                         # 4. INHIBITION & RÉFLEXION (Pydantic)
-                        hist[0]["content"] += "\n\n<directive_interne>FORMAT STRICT : Tu DOIS répondre EXCLUSIVEMENT sous la forme d'un objet JSON contenant les 5 clés suivantes : 'diagnostic_interne', 'lettre_attendue_qcm', 'passage_bloc_suivant' (booléen true ou false), 'strategie_choisie', et 'reponse_visible'.</directive_interne>"
+                        hist[0]["content"] += "\n\n<directive_interne>FORMAT STRICT : Tu DOIS répondre EXCLUSIVEMENT sous la forme d'un objet JSON contenant les 6 clés suivantes : 'diagnostic_interne', 'lettre_attendue_qcm', 'concepts_restants', 'passage_bloc_suivant' (booléen true ou false), 'strategie_choisie', et 'reponse_visible'.</directive_interne>"
 
                         res_reflexion = client.chat.completions.create(
                             model=MODELE_ALBERT, 
@@ -619,8 +621,9 @@ if st.session_state.session_active:
                         flux_final = client.chat.completions.create(model=MODELE_ALBERT, messages=hist, response_format={"type": "json_object"}, temperature=0.3)
                         reflexion_corrigee = ReflexionTuteur.model_validate_json(flux_final.choices[0].message.content)
                         texte_final = reflexion_corrigee.reponse_visible
-                        # Récupération sécurisée du booléen post-correction
+                        # Récupération sécurisée des variables post-correction
                         reflexion.passage_bloc_suivant = reflexion_corrigee.passage_bloc_suivant
+                        reflexion.concepts_restants = reflexion_corrigee.concepts_restants
 
                     # =========================================================
                     # AVANCEMENT DANS LE COURS (RAG SÉQUENTIEL)
@@ -642,6 +645,7 @@ if st.session_state.session_active:
                         "diagnostic": reflexion.diagnostic_interne,
                         "strategie": reflexion.strategie_choisie,
                         "lettre_attendue": reflexion.lettre_attendue_qcm,
+                        "concepts_restants": reflexion.concepts_restants,
                         "passage_bloc_suivant": reflexion.passage_bloc_suivant,
                         "isMeta": True,
                         "isHidden": not st.session_state.get("mode_debug", False)
@@ -651,6 +655,7 @@ if st.session_state.session_active:
                         with st.expander("🧠 Méta-cognition de l'IA (Debug)", expanded=True):
                             st.markdown(f"**Diagnostic :** {reflexion.diagnostic_interne}")
                             st.markdown(f"**Stratégie :** {reflexion.strategie_choisie}")
+                            st.markdown(f"**Concepts restants :** {reflexion.concepts_restants}")
                             st.markdown(f"**Passage au bloc suivant :** {reflexion.passage_bloc_suivant}")
 
                     st.write_stream(simuler_stream(texte_final))
