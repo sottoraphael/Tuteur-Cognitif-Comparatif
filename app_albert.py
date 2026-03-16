@@ -53,10 +53,6 @@ if "resume_memoire" not in st.session_state: st.session_state.resume_memoire = "
 if "index_resume" not in st.session_state: st.session_state.index_resume = 0
 if "lettre_attendue" not in st.session_state: st.session_state.lettre_attendue = "NA"
 
-# Variables pour le Chunking Séquentiel
-if "chunks" not in st.session_state: st.session_state.chunks = []
-if "index_chunk" not in st.session_state: st.session_state.index_chunk = 0
-
 # Variables pour la gestion des vues et du bilan métacognitif
 if "phase" not in st.session_state: st.session_state.phase = 'chat'
 if "texte_bilan" not in st.session_state: st.session_state.texte_bilan = ""
@@ -100,8 +96,8 @@ class ReflexionTuteur(BaseModel):
     """Schéma imposant la réflexion avant l'action (Inhibition). Optimisé pour regrouper le diagnostic et la vérification."""
     diagnostic_interne: str = Field(description="Analyse factuelle de la réponse de l'élève et vérification stricte de la faisabilité physique/logique des analogies employées.")
     lettre_attendue_qcm: str = Field(description="Si ta reponse_visible contient une nouvelle question QCM, indique ici UNIQUEMENT la lettre de la bonne réponse (A, B, C ou D). Sinon, écris 'NA'.")
-    concepts_restants: str = Field(description="Analyse l'extrait du cours. Écris une CHAÎNE DE CARACTÈRES UNIQUE (pas de tableau/liste JSON) résumant les concepts majeurs non encore abordés. S'ils ont TOUS été testés et maîtrisés, écris exactement le mot 'Aucun'.")
-    passage_bloc_suivant: bool = Field(description="Valeur booléenne. Mets true UNIQUEMENT si 'concepts_restants' est 'Aucun' ET que la réponse de l'élève est juste. Sinon, garde false.")
+    concept_actuel_evalue: str = Field(description="Le concept précis du cours que tu es en train de faire travailler à l'élève dans ton message actuel.")
+    liste_concepts_restants_du_cours: str = Field(description="Analyse l'INTÉGRALITÉ du cours fourni. Écris une CHAÎNE DE CARACTÈRES UNIQUE (pas de tableau) listant les concepts majeurs qu'il te reste à tester ensuite. S'ils ont TOUS été testés, écris exactement le mot 'Aucun'.")
     strategie_choisie: str = Field(description="Catégorisation stricte de l'intervention (ex: Feedback de Processus, Remédiation, etc.).")
     reponse_visible: str = Field(description="Le texte final adressé à l'élève, respectant le format LaTeX et la Transparence Cognitive.")
 
@@ -379,20 +375,6 @@ Choisis la stratégie la plus pertinente :
 # ==========================================
 # UTILITAIRES & ORCHESTRATION
 # ==========================================
-# OPTIMISATION CHUNKING : Agrandissement des blocs pour éviter l'avancement prématuré
-def decouper_texte(texte, taille_chunk=10000, chevauchement=2000):
-    """Découpe séquentiellement le cours pour prévenir la surcharge du contexte (RAG linéaire)."""
-    chunks = []
-    start = 0
-    texte_len = len(texte)
-    while start < texte_len:
-        end = min(start + taille_chunk, texte_len)
-        chunks.append(texte[start:end])
-        if end == texte_len:
-            break
-        start += taille_chunk - chevauchement
-    return chunks if chunks else ["Texte vide."]
-
 def simuler_stream(texte):
     """Simule un effet de frappe pour réduire l'impatience de l'élève."""
     for mot in texte.split(" "):
@@ -461,8 +443,6 @@ with st.sidebar:
         txt = extraire_texte_pdf(pdf)
         if txt:
             st.session_state.texte_cours_integral = txt
-            st.session_state.chunks = decouper_texte(txt) # Initialisation du fenêtrage
-            st.session_state.index_chunk = 0
             st.session_state.api_key = st.secrets["ALBERT_API_KEY"] if "ALBERT_API_KEY" in st.secrets else "VOTRE_CLE_API"
             st.session_state.matiere = mat
             st.session_state.niveau_scolaire = niv_scolaire
@@ -501,8 +481,8 @@ if st.session_state.session_active:
                             st.markdown(f"**Diagnostic :** {msg.get('diagnostic', 'N/A')}")
                             st.markdown(f"**Stratégie :** {msg.get('strategie', 'N/A')}")
                             st.markdown(f"**Lettre QCM Attendue :** {msg.get('lettre_attendue', 'N/A')}")
-                            st.markdown(f"**Concepts restants :** {msg.get('concepts_restants', 'N/A')}")
-                            st.markdown(f"**Passage au bloc suivant :** {msg.get('passage_bloc_suivant', False)}")
+                            st.markdown(f"**Concept évalué :** {msg.get('concept_actuel_evalue', 'N/A')}")
+                            st.markdown(f"**Concepts restants :** {msg.get('liste_concepts_restants_du_cours', 'N/A')}")
                 else:
                     with st.chat_message(msg["role"]): 
                         st.markdown(msg["content"])
@@ -510,12 +490,8 @@ if st.session_state.session_active:
         # Initialisation de la discussion
         if len(st.session_state.messages) == 0:
             with st.chat_message("assistant"):
-                # Injection de la seule fraction de texte utile (Chunking Séquentiel)
-                total_chunks = len(st.session_state.chunks)
-                chunk_actuel = st.session_state.chunks[st.session_state.index_chunk]
-                
                 ctx = [{"role": "system", "content": prompt_sys},
-                       {"role": "user", "content": f"EXTRAIT DU COURS (Partie {st.session_state.index_chunk + 1}/{total_chunks}) :\n{chunk_actuel}\n\nCommence l'exercice sur cette partie."}]
+                       {"role": "user", "content": f"COURS INTÉGRAL :\n{st.session_state.texte_cours_integral[:40000]}\n\nCommence l'exercice en balayant le premier concept."}]
                 
                 flux = client.chat.completions.create(model=MODELE_ALBERT, messages=ctx, temperature=0.3)
                 rep = st.write(flux.choices[0].message.content)
@@ -550,10 +526,8 @@ if st.session_state.session_active:
                         "content": f"<memoire_long_terme>Résumé de l'historique : {st.session_state.resume_memoire}</memoire_long_terme>"
                     })
                 
-                # Injection dynamique de la fraction courante
-                total_chunks = len(st.session_state.chunks)
-                chunk_courant = st.session_state.chunks[st.session_state.index_chunk]
-                hist.append({"role": "user", "content": f"EXTRAIT DU COURS (Partie {st.session_state.index_chunk + 1}/{total_chunks}) :\n{chunk_courant}"})
+                # Injection intégrale du cours
+                hist.append({"role": "user", "content": f"RAPPEL DU COURS INTÉGRAL :\n{st.session_state.texte_cours_integral[:40000]}"})
                 
                 fenetre_active = messages_api[st.session_state.index_resume:]
                 hist.extend(fenetre_active)
@@ -599,7 +573,7 @@ if st.session_state.session_active:
                                 hist.append({"tool_call_id": tc.id, "role": "tool", "name": "verifier_calcul_formel", "content": json.dumps(verif)})
 
                         # 4. INHIBITION & RÉFLEXION (Pydantic)
-                        hist[0]["content"] += "\n\n<directive_interne>FORMAT STRICT : Tu DOIS répondre EXCLUSIVEMENT sous la forme d'un objet JSON contenant les 6 clés suivantes : 'diagnostic_interne', 'lettre_attendue_qcm', 'concepts_restants' (format texte simple, pas de tableau), 'passage_bloc_suivant' (booléen true ou false), 'strategie_choisie', et 'reponse_visible'.</directive_interne>"
+                        hist[0]["content"] += "\n\n<directive_interne>FORMAT STRICT : Tu DOIS répondre EXCLUSIVEMENT sous la forme d'un objet JSON contenant les 6 clés suivantes : 'diagnostic_interne', 'lettre_attendue_qcm', 'concept_actuel_evalue', 'liste_concepts_restants_du_cours' (format texte simple), 'strategie_choisie', et 'reponse_visible'.</directive_interne>"
 
                         res_reflexion = client.chat.completions.create(
                             model=MODELE_ALBERT, 
@@ -622,18 +596,14 @@ if st.session_state.session_active:
                         reflexion_corrigee = ReflexionTuteur.model_validate_json(flux_final.choices[0].message.content)
                         texte_final = reflexion_corrigee.reponse_visible
                         # Récupération sécurisée des variables post-correction
-                        reflexion.passage_bloc_suivant = reflexion_corrigee.passage_bloc_suivant
-                        reflexion.concepts_restants = reflexion_corrigee.concepts_restants
+                        reflexion.concept_actuel_evalue = reflexion_corrigee.concept_actuel_evalue
+                        reflexion.liste_concepts_restants_du_cours = reflexion_corrigee.liste_concepts_restants_du_cours
 
                     # =========================================================
-                    # AVANCEMENT DANS LE COURS (RAG SÉQUENTIEL)
+                    # FIN DE SESSION (BALAYAGE INTÉGRAL)
                     # =========================================================
-                    if reflexion.passage_bloc_suivant:
-                        if st.session_state.index_chunk < len(st.session_state.chunks) - 1:
-                            st.session_state.index_chunk += 1
-                        else:
-                            # Si c'était le dernier chunk, on oriente doucement vers la fin
-                            texte_final += "\n\n*Nous avons terminé le balayage de ce document. N'hésite pas à clôturer la session pour voir ton bilan métacognitif !*"
+                    if reflexion.liste_concepts_restants_du_cours.strip().lower() in ["aucun", "aucun.", "aucun concept restant"]:
+                        texte_final += "\n\n*Nous avons terminé le balayage de ce document. N'hésite pas à clôturer la session pour voir ton bilan métacognitif !*"
 
                     # Sauvegarde de la lettre attendue en mémoire pour le prochain tour
                     st.session_state.lettre_attendue = reflexion.lettre_attendue_qcm
@@ -645,8 +615,8 @@ if st.session_state.session_active:
                         "diagnostic": reflexion.diagnostic_interne,
                         "strategie": reflexion.strategie_choisie,
                         "lettre_attendue": reflexion.lettre_attendue_qcm,
-                        "concepts_restants": reflexion.concepts_restants,
-                        "passage_bloc_suivant": reflexion.passage_bloc_suivant,
+                        "concept_actuel_evalue": reflexion.concept_actuel_evalue,
+                        "liste_concepts_restants_du_cours": reflexion.liste_concepts_restants_du_cours,
                         "isMeta": True,
                         "isHidden": not st.session_state.get("mode_debug", False)
                     })
@@ -655,8 +625,8 @@ if st.session_state.session_active:
                         with st.expander("🧠 Méta-cognition de l'IA (Debug)", expanded=True):
                             st.markdown(f"**Diagnostic :** {reflexion.diagnostic_interne}")
                             st.markdown(f"**Stratégie :** {reflexion.strategie_choisie}")
-                            st.markdown(f"**Concepts restants :** {reflexion.concepts_restants}")
-                            st.markdown(f"**Passage au bloc suivant :** {reflexion.passage_bloc_suivant}")
+                            st.markdown(f"**Concept évalué :** {reflexion.concept_actuel_evalue}")
+                            st.markdown(f"**Concepts restants :** {reflexion.liste_concepts_restants_du_cours}")
 
                     st.write_stream(simuler_stream(texte_final))
                     
